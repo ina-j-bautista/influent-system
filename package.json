@@ -1,0 +1,35 @@
+{
+  "name": "influent-system",
+  "version": "1.0.0",
+  "description": "Influencer detection system with graph-based analysis",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "ts-node integration-example.ts",
+    "test": "jest",
+    "lint": "eslint . --ext .ts"
+  },
+  "keywords": [
+    "influencer",
+    "social-media",
+    "graph-analysis",
+    "sentiment-analysis"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "apify-client": "^2.23.0",
+    "pg": "^8.11.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/pg": "^8.11.0",
+    "autoprefixer": "^10.5.0",
+    "dotenv": "^16.6.1",
+    "postcss": "^8.5.10",
+    "tailwindcss": "^4.2.4",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3"
+  }
+}

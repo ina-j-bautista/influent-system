@@ -1,0 +1,10 @@
+INFLUENT Convergence Run Metadata
+================================
+
+Run Timestamp: 2026-04-13T13:07:25.822Z
+Dampening Factor (d): 0.85
+Convergence Threshold (ε): 0.00001
+Total Iterations: 2
+Converged: Yes
+Final Max Delta: 0
+Total Users: 100

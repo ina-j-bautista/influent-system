@@ -1,0 +1,5 @@
+Test DB Connection
+npx ts-node test-connection.ts
+
+Run Demo
+npx ts-node run-algorithm-demo.ts
