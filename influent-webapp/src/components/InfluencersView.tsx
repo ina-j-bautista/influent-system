@@ -24,14 +24,21 @@ const InfluencersView: React.FC = () => {
   }, []);
 
   const fetchInfluencers = async () => {
-    try {
-      const response = await fetch('http://localhost:3001/api/influencers');
-      const data = await response.json();
+  try {
+    const response = await fetch('http://localhost:3001/api/influencers');
+    const data = await response.json();
+    
+    if (Array.isArray(data)) {
       setInfluencers(data);
-    } catch (error) {
-      console.error('Failed to fetch influencers:', error);
+    } else {
+      console.error('API returned non-array:', data);
+      setInfluencers([]); 
     }
-  };
+  } catch (error) {
+    console.error('Failed to fetch influencers:', error);
+    setInfluencers([]);
+  }
+};
 
   const handleSort = (field: 'influent_score' | 'followers' | 'engagement') => {
     if (sortField === field) {

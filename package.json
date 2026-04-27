@@ -4,6 +4,7 @@
   "description": "Influencer detection system with graph-based analysis",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "type": "module",
   "scripts": {
     "build": "tsc",
     "dev": "ts-node integration-example.ts",
@@ -20,9 +21,13 @@
   "license": "MIT",
   "dependencies": {
     "apify-client": "^2.23.0",
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
     "pg": "^8.11.3"
   },
   "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
     "@types/node": "^20.11.0",
     "@types/pg": "^8.11.0",
     "autoprefixer": "^10.5.0",
@@ -30,6 +35,7 @@
     "postcss": "^8.5.10",
     "tailwindcss": "^4.2.4",
     "ts-node": "^10.9.2",
+    "tsx": "^4.21.0",
     "typescript": "^5.3.3"
   }
 }
