@@ -187,18 +187,18 @@ const InfluencersView: React.FC = () => {
                   <td className="px-6 py-4 text-stone-600">@{influencer.user_id}</td>
                   <td className="px-6 py-4 text-stone-900">{influencer.followers.toLocaleString()}</td>
                   <td className="px-6 py-4 text-stone-900">
-                    {(influencer.engagement * 100).toFixed(1)}%
+                    {influencer.engagement.toFixed(1)}%
                   </td>
                   <td className="px-6 py-4">
                     <div className="flex items-center gap-3">
                       <div className="flex-1 bg-stone-200 h-2 rounded-full overflow-hidden">
                         <div 
                           className="bg-stone-900 h-full rounded-full"
-                          style={{ width: `${influencer.influent_score * 100}%` }}
+                          style={{ width: `${influencer.influent_score}%` }}
                         />
                       </div>
                       <span className="text-sm font-mono text-stone-900 w-12">
-                        {(influencer.influent_score * 100).toFixed(1)}%
+                        {influencer.influent_score.toFixed(1)}%
                       </span>
                     </div>
                   </td>
@@ -274,13 +274,13 @@ const InfluencersView: React.FC = () => {
               <div className="bg-stone-50 p-4 rounded-lg">
                 <p className="text-xs text-stone-500 mb-1">Engagement</p>
                 <p className="text-lg font-semibold text-stone-900">
-                  {(selectedInfluencer.engagement * 100).toFixed(1)}%
+                  {selectedInfluencer.engagement.toFixed(1)}%
                 </p>
               </div>
               <div className="col-span-2 bg-stone-50 p-4 rounded-lg">
                 <p className="text-xs text-stone-500 mb-1">Influence Score</p>
                 <p className="text-2xl font-semibold text-stone-900">
-                  {(selectedInfluencer.influent_score * 100).toFixed(1)}%
+                  {selectedInfluencer.influent_score.toFixed(1)}%
                 </p>
               </div>
             </div>

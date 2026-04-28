@@ -184,22 +184,64 @@ app.post('/api/analyze', async (req: express.Request, res: express.Response) => 
     }
     console.log('');
 
-    // 2. Build connection weights (NORMALIZED per user)
+    // 2. Build connection weights using thesis formula approximation
+    // W(v,u) = 0.4(reciprocity) + 0.4(interaction frequency) + 0.2(account credibility)
     const userIds = users.map((u: any) => u.user_id);
     const connectionWeights = new Map<string, Map<string, number>>();
+    const userFollowers = new Map<string, number>();
+    const userVerified = new Map<string, boolean>();
+    
+    // Store user data
+    for (const user of users) {
+      userFollowers.set(user.user_id, user.followers);
+      userVerified.set(user.user_id, user.is_verified || false);
+    }
+    
+    // Find max followers for normalization
+    const maxFollowers = Math.max(...Array.from(userFollowers.values()));
     
     for (const userId of userIds) {
       const connections = new Map<string, number>();
-      const numConnections = userIds.length - 1;
+      let totalWeight = 0;
+      
+      const vFollowers = userFollowers.get(userId) || 0;
       
       for (const otherId of userIds) {
         if (userId !== otherId) {
-          // Normalize: each connection = 1 / (total connections)
-          connections.set(otherId, 1.0 / numConnections);
+          const uFollowers = userFollowers.get(otherId) || 0;
+          const uVerified = userVerified.get(otherId) || false;
+          
+          // Reciprocity: follower ratio similarity (0-1)
+          const followerRatio = Math.min(vFollowers, uFollowers) / Math.max(vFollowers, uFollowers, 1);
+          const reciprocity = followerRatio;
+          
+          // Interaction frequency: use engagement score as proxy (already normalized 0-1)
+          const interactionFreq = engagementScores.get(otherId) || 0;
+          
+          // Account credibility: follower count + verification
+          const followerCredibility = uFollowers / maxFollowers;
+          const verificationBonus = uVerified ? 0.2 : 0;
+          const credibility = Math.min(followerCredibility + verificationBonus, 1.0);
+          
+          // Apply formula: W(v,u) = 0.4*reciprocity + 0.4*interaction + 0.2*credibility
+          const weight = 0.4 * reciprocity + 0.4 * interactionFreq + 0.2 * credibility;
+          
+          connections.set(otherId, weight);
+          totalWeight += weight;
         }
       }
+      
+      // Normalize so weights sum to 1
+      if (totalWeight > 0) {
+        for (const [otherId, weight] of connections) {
+          connections.set(otherId, weight / totalWeight);
+        }
+      }
+      
       connectionWeights.set(userId, connections);
     }
+    
+    console.log('✅ Connection weights computed using W(v,u) formula\n');
 
     // 3. Sentiment scores (neutral baseline)
     const sentimentScores = new Map<string, number>();
@@ -280,8 +322,8 @@ app.get('/api/influencers', async (_req: express.Request, res: express.Response)
         user_id: user.user_id,
         display_name: user.display_name,
         followers: user.followers,
-        engagement: cached?.engagement || 0,
-        influent_score: cached?.influent_score || 0,
+        engagement: (cached?.engagement || 0) * 100,      // Convert to percentage
+        influent_score: (cached?.influent_score || 0) * 100,  // Convert to percentage
         bio: user.bio,
         location: user.location
       };
@@ -340,8 +382,28 @@ app.get('/api/analytics', async (_req: express.Request, res: express.Response) =
       GROUP BY range
     `);
 
-    res.json({ temporalData, scoreDistribution });
+    // Convert post_count from string to number
+    const formattedTemporalData = temporalData.map((row: any) => ({
+      date: row.date,
+      post_count: parseInt(row.post_count, 10)
+    }));
+
+    // Ensure all follower ranges are present and convert counts to numbers
+    const allRanges = ['0-1K', '1K-10K', '10K-100K', '100K+'];
+    const formattedDistribution = allRanges.map(range => {
+      const found = scoreDistribution.find((r: any) => r.range === range);
+      return {
+        range,
+        count: found ? parseInt(found.count, 10) : 0
+      };
+    });
+
+    res.json({ 
+      temporalData: formattedTemporalData,
+      scoreDistribution: formattedDistribution 
+    });
   } catch (error: any) {
+    console.error('Analytics error:', error);
     res.status(500).json({ error: error.message });
   }
 });
