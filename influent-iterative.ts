@@ -8,20 +8,32 @@ export interface ConvergenceResult {
   converged: boolean;
 }
 
+export interface ConvergenceLogger {
+  logIteration(iteration: number, scores: Map<string, number>, prevScores: Map<string, number>): void;
+}
+
 export class InfluentIterativeAlgorithm {
   
   /**
    * Iterative INFLUENT score computation with convergence checking
-   * Based on: INFLUENTₜ₊₁ = (1-d) + d × Σ(v∈in(u)) INFLUENTₜ(v) * W(v,u) * S(v,u) * E(v,u)/C(v)
+   * Based on exact thesis formula:
+   * INFLUENTₜ₊₁(u) = (1-d) + d × Σ(v∈in(u)) [INFLUENTₜ(v) * W(v,u) * S(v,u) * E(v,u)] / C(v)
+   * 
+   * Where:
+   * - W(v,u) = Connection weight (normalized: Σ W(v,u) = 1 for all outgoing connections)
+   * - S(v,u) = Sentiment score [0, 1]
+   * - E(v,u) = Engagement score with temporal decay: E(v,u) * e^(-λΔt)
+   * - C(v) = Normalization factor = 1 (since weights already sum to 1)
    */
   static computeWithConvergence(
     users: string[],
-    connectionWeights: Map<string, Map<string, number>>,  // W(v,u)
-    sentimentScores: Map<string, number>,                  // S(v,u)
-    engagementScores: Map<string, number>,                 // E(v,u)
-    dampeningFactor: number = 0.85,
-    convergenceThreshold: number = 1e-5,
-    maxIterations: number = 100
+    connectionWeights: Map<string, Map<string, number>>,  // W(v,u) - already normalized
+    sentimentScores: Map<string, number>,                  // S(v,u) ∈ [0, 1]
+    engagementScores: Map<string, number>,                 // E(v,u) - normalized
+    dampeningFactor: number = 0.85,                        // d
+    convergenceThreshold: number = 1e-6,                   // ε (from your diagram: 10^-6)
+    maxIterations: number = 200,
+    logger?: ConvergenceLogger
   ): ConvergenceResult {
     
     const n = users.length;
@@ -35,7 +47,8 @@ export class InfluentIterativeAlgorithm {
     let iteration = 0;
     let converged = false;
     
-    console.log(`\nStarting iterative convergence (d=${dampeningFactor}, ε=${convergenceThreshold})...`);
+    console.log(`\n🔄 Starting INFLUENT convergence (d=${dampeningFactor}, ε=${convergenceThreshold})...`);
+    console.log(`📊 Users: ${n}, Max iterations: ${maxIterations}\n`);
     
     while (iteration < maxIterations && !converged) {
       const nextScores = new Map<string, number>();
@@ -48,28 +61,20 @@ export class InfluentIterativeAlgorithm {
         for (const v of users) {
           if (v === u) continue;
           
-          // Get connection weight W(v,u)
+          // Get connection weight W(v,u) - already normalized to sum to 1
           const wvu = connectionWeights.get(v)?.get(u) || 0;
           if (wvu === 0) continue;
           
-          // Get sentiment S(v,u)
+          // Get sentiment S(v,u) ∈ [0, 1]
           const svu = sentimentScores.get(v) || 0.5;
           
-          // Get engagement E(v,u)
+          // Get engagement E(v,u) - already normalized to [0, 1]
           const evu = engagementScores.get(v) || 0;
           
-          // Get out-degree normalization C(v) - sum of outgoing connection weights
-          let cv = 0;
-          const vConnections = connectionWeights.get(v);
-          if (vConnections) {
-            for (const weight of vConnections.values()) {
-              cv += weight;
-            }
-          }
+          // C(v) = 1 since we already normalized connection weights to sum to 1
+          const cv = 1.0;
           
-          if (cv === 0) continue;
-          
-          // Compute: INFLUENTₜ(v) * W(v,u) * S(v,u) * E(v,u) / C(v)
+          // Compute influence contribution: INFLUENTₜ(v) * W(v,u) * S(v,u) * E(v,u) / C(v)
           const influenceContribution = 
             (currentScores.get(v) || 0) * wvu * svu * evu / cv;
           
@@ -79,6 +84,11 @@ export class InfluentIterativeAlgorithm {
         // Apply formula: INFLUENTₜ₊₁(u) = (1-d) + d * Σ
         const newScore = (1 - dampeningFactor) + dampeningFactor * influenceSum;
         nextScores.set(u, newScore);
+      }
+      
+      // Log iteration if logger provided
+      if (logger) {
+        logger.logIteration(iteration + 1, nextScores, currentScores);
       }
       
       // Check convergence: max |INFLUENTₜ₊₁(u) - INFLUENTₜ(u)| < ε
@@ -92,8 +102,9 @@ export class InfluentIterativeAlgorithm {
       
       iteration++;
       
-      if (iteration % 10 === 0 || maxDelta < convergenceThreshold) {
-        console.log(`   Iteration ${iteration}: max delta = ${maxDelta.toExponential(4)}`);
+      // Log progress every 10 iterations or when close to convergence
+      if (iteration % 10 === 0 || maxDelta < convergenceThreshold * 10) {
+        console.log(`   Iteration ${iteration}: max Δ = ${maxDelta.toExponential(4)}`);
       }
       
       if (maxDelta < convergenceThreshold) {
@@ -108,7 +119,12 @@ export class InfluentIterativeAlgorithm {
     }
     
     if (!converged) {
-      console.log(`   ⚠ Maximum iterations (${maxIterations}) reached without full convergence\n`);
+      console.log(`   ⚠️  Reached max iterations (${maxIterations}) without full convergence`);
+      console.log(`   Final max delta: ${
+        Math.max(...Array.from(users).map(u => 
+          Math.abs((currentScores.get(u) || 0) - 1.0/n)
+        ))
+      }\n`);
     }
     
     return {

@@ -61,6 +61,15 @@ export class ApifyScraper {
 
     console.log(`📌 Scraping: ${handles.join(', ')}`);
 
+    console.log('\n🔍 DEBUG - Apify input:');
+    console.log(JSON.stringify({
+      handles,
+      tweetsDesired: config.maxItems
+    }, null, 2));
+    console.log('Actor: quacker~twitter-scraper');
+    console.log(`API Token: ${this.client['token']?.substring(0, 20)}...`);
+    console.log('');
+
     const run = await this.client.actor('quacker~twitter-scraper').call({
       handles,
       tweetsDesired: config.maxItems

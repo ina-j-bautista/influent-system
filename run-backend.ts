@@ -4,6 +4,7 @@ import 'dotenv/config';
 import { createDatabaseConnection } from './database-adapter.ts';
 import { SentimentAdapter } from './sentiment-adapter.ts';
 import { runApifyScrape } from './apify-scraper.ts';
+import { ConvergenceLogger } from './export-convergence.js';
 
 const app = express();
 const PORT = 3001;
@@ -114,7 +115,7 @@ app.post('/api/analyze', async (req: express.Request, res: express.Response) => 
     console.log('📊 Starting analysis pipeline...');
     
     await clearDatabase();
-    scoreCache.clear(); // Clear score cache
+    scoreCache.clear();
 
     const scrapeResult = await runCompleteScrape({
       keywords: Array.isArray(keywords) ? keywords : keywords.split(',').map((k: string) => k.trim()),
@@ -131,30 +132,70 @@ app.post('/api/analyze', async (req: express.Request, res: express.Response) => 
     const users = await db.getAllUsers();
     console.log(`📊 Loaded ${users.length} users for analysis`);
 
-    // 1. Calculate engagement scores
-    console.log('🧮 Computing engagement scores...');
+    // 1. Calculate engagement scores WITH temporal decay
+    console.log('🧮 Computing engagement scores with temporal decay...');
     const engagementScores = new Map<string, number>();
+    const lambda = 0.5;
+    const now = new Date();
     
     for (const user of users) {
       const posts = await db.executeQuery(`
-        SELECT AVG(like_count + reply_count + retweet_count) as avg_engagement
+        SELECT 
+          like_count,
+          reply_count,
+          retweet_count,
+          created_at
         FROM twitter_posts
         WHERE user_id = $1
       `, [user.user_id]);
       
-      const avgEng = parseFloat(posts[0]?.avg_engagement || '0');
-      engagementScores.set(user.user_id, avgEng);
+      if (posts.length === 0) {
+        engagementScores.set(user.user_id, 0);
+        continue;
+      }
+      
+      let totalDecayedEngagement = 0;
+      
+      for (const post of posts) {
+        const rawEngagement = (post.like_count || 0) + (post.reply_count || 0) + (post.retweet_count || 0);
+        const postDate = new Date(post.created_at);
+        const daysSincePost = (now.getTime() - postDate.getTime()) / (1000 * 60 * 60 * 24);
+        const decayFactor = Math.exp(-lambda * daysSincePost);
+        const decayedEngagement = rawEngagement * decayFactor;
+        totalDecayedEngagement += decayedEngagement;
+      }
+      
+      const avgDecayedEngagement = totalDecayedEngagement / posts.length;
+      engagementScores.set(user.user_id, avgDecayedEngagement);
+      
+      console.log(`   ${user.user_id}: ${posts.length} posts, raw avg = ${avgDecayedEngagement.toFixed(2)}`);
     }
 
-    // 2. Build connection weights (simplified - full mesh)
+    // NORMALIZE engagement to [0, 1]
+    const maxEngagement = Math.max(...Array.from(engagementScores.values()));
+    console.log(`\n📊 Max engagement: ${maxEngagement.toFixed(2)}`);
+    
+    if (maxEngagement > 0) {
+      for (const [userId, eng] of engagementScores) {
+        const normalized = eng / maxEngagement;
+        engagementScores.set(userId, normalized);
+        console.log(`   ${userId}: normalized = ${(normalized * 100).toFixed(2)}%`);
+      }
+    }
+    console.log('');
+
+    // 2. Build connection weights (NORMALIZED per user)
     const userIds = users.map((u: any) => u.user_id);
     const connectionWeights = new Map<string, Map<string, number>>();
     
     for (const userId of userIds) {
       const connections = new Map<string, number>();
+      const numConnections = userIds.length - 1;
+      
       for (const otherId of userIds) {
         if (userId !== otherId) {
-          connections.set(otherId, 1.0);
+          // Normalize: each connection = 1 / (total connections)
+          connections.set(otherId, 1.0 / numConnections);
         }
       }
       connectionWeights.set(userId, connections);
@@ -166,8 +207,9 @@ app.post('/api/analyze', async (req: express.Request, res: express.Response) => 
       sentimentScores.set(userId, 0.5);
     }
 
-    // 4. Run INFLUENT iterative algorithm
+    // 4. Run INFLUENT algorithm
     console.log('🔄 Running INFLUENT algorithm...');
+    const logger = new ConvergenceLogger();
     const { InfluentIterativeAlgorithm } = await import('./influent-iterative.js');
     
     const result = InfluentIterativeAlgorithm.computeWithConvergence(
@@ -175,35 +217,40 @@ app.post('/api/analyze', async (req: express.Request, res: express.Response) => 
       connectionWeights,
       sentimentScores,
       engagementScores,
-      0.85,   // dampening factor
-      1e-5,   // convergence threshold
-      50      // max iterations
+      0.85,
+      1e-6,
+      200,
+      logger
     );
+    
+    // Export convergence data
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    logger.exportToCSV(`./convergence-${timestamp}.csv`);
 
-    // 5. Build rankings with real scores
+    // 5. Build rankings
     const rankings = users.map((user: any) => {
       const engagement = engagementScores.get(user.user_id) || 0;
       const score = result.finalScores.get(user.user_id) || 0;
       
-      // Store in cache
+      // Store normalized values (0-1) in cache
       scoreCache.set(user.user_id, {
-        engagement: engagement,
-        influent_score: score
+        engagement: engagement,      // Keep as 0-1
+        influent_score: score        // Keep as 0-1
       });
       
       return {
         user_id: user.user_id,
         display_name: user.display_name,
         followers: user.followers,
-        engagement: engagement,
+        engagement: engagement * 100,  // Convert to percentage ONLY here
         sentiment: 0.5,
-        influent_score: score
+        influent_score: score * 100     // Convert to percentage ONLY here
       };
     });
 
     rankings.sort((a, b) => b.influent_score - a.influent_score);
     
-    console.log(`✅ Analysis complete! Top score: ${rankings[0]?.influent_score.toFixed(4)}`);
+    console.log(`✅ Analysis complete! Top score: ${rankings[0]?.influent_score.toFixed(2)}%`);
 
     res.json({
       success: true,
@@ -226,7 +273,6 @@ app.get('/api/influencers', async (_req: express.Request, res: express.Response)
   try {
     const users = await db.getAllUsers();
     
-    // Build response with cached scores
     const influencers = users.map((user: any) => {
       const cached = scoreCache.get(user.user_id);
       
@@ -241,7 +287,6 @@ app.get('/api/influencers', async (_req: express.Request, res: express.Response)
       };
     });
     
-    // Sort by score
     influencers.sort((a, b) => b.influent_score - a.influent_score);
     
     res.json(influencers);
