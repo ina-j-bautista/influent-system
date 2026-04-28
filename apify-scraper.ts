@@ -151,11 +151,11 @@ export class ApifyScraper {
 
       // Add post
       posts.push({
-        id: item.id_str || item.id,
-        author: {
-          id: twitterUser.id_str || userName,
-          userName: userName
-        },
+      id: item.id_str || item.id,
+      author: {
+        id: userName,  // ← CORRECT: use screen name to match users table
+        userName: userName
+      },
         fullText: item.full_text || item.text,
         createdAt: item.created_at || now,
         likeCount: item.favorite_count || 0,

@@ -22,6 +22,9 @@ const sentimentAdapter = new SentimentAdapter();
 
 console.log('✅ Modules loaded successfully');
 
+// Store scores in memory cache
+const scoreCache = new Map<string, { engagement: number; influent_score: number }>();
+
 interface RankedInfluencer {
   user_id: string;
   display_name: string;
@@ -59,11 +62,9 @@ async function runCompleteScrape(params: {
   try {
     console.log('📡 Scraping Twitter data...');
     
-    await runApifyScrape(params);  // Changed this line
+    await runApifyScrape(params);
 
     console.log(`✅ Scrape completed`);
-    
-    
 
     const userCount = await db.executeQuery('SELECT COUNT(*) as count FROM twitter_users');
     const postCount = await db.executeQuery('SELECT COUNT(*) as count FROM twitter_posts');
@@ -113,11 +114,12 @@ app.post('/api/analyze', async (req: express.Request, res: express.Response) => 
     console.log('📊 Starting analysis pipeline...');
     
     await clearDatabase();
+    scoreCache.clear(); // Clear score cache
 
     const scrapeResult = await runCompleteScrape({
       keywords: Array.isArray(keywords) ? keywords : keywords.split(',').map((k: string) => k.trim()),
-      minFollowers: 100,
-      minAvgLikes: 5,
+      minFollowers: 0,
+      minAvgLikes: 0,
       startDate: startDate || '',
       endDate: endDate || '',
       language: 'en',
@@ -129,45 +131,79 @@ app.post('/api/analyze', async (req: express.Request, res: express.Response) => 
     const users = await db.getAllUsers();
     console.log(`📊 Loaded ${users.length} users for analysis`);
 
-    // Calculate real engagement and scores
-const rankings = await Promise.all(users.slice(0, 50).map(async (user: any) => {
-  // Get user's posts for engagement calculation
-  const posts = await db.executeQuery(`
-    SELECT 
-      AVG(like_count) as avg_likes,
-      AVG(reply_count) as avg_replies,
-      AVG(retweet_count) as avg_retweets,
-      COUNT(*) as post_count
-    FROM twitter_posts
-    WHERE user_id = $1
-  `, [user.user_id]);
-  
-  const postData = posts[0];
-  const avgLikes = parseFloat(postData?.avg_likes || 0);
-  const avgReplies = parseFloat(postData?.avg_replies || 0);
-  const avgRetweets = parseFloat(postData?.avg_retweets || 0);
-  
-  // Engagement rate = (likes + replies + retweets) / followers
-  const totalEngagement = avgLikes + avgReplies + avgRetweets;
-  const engagement = user.followers > 0 ? totalEngagement / user.followers : 0;
-  
-  // Simple influence score: weighted combination
-  const influent_score = (
-    (user.followers / 10000000) * 0.4 +  // Follower component (normalized to 10M)
-    engagement * 0.6                       // Engagement component
-  );
-  
-  return {
-    user_id: user.user_id,
-    display_name: user.display_name,
-    followers: user.followers,
-    engagement: engagement,
-    sentiment: 0.5,
-    influent_score: Math.min(influent_score, 1.0)
-  };
-}));
+    // 1. Calculate engagement scores
+    console.log('🧮 Computing engagement scores...');
+    const engagementScores = new Map<string, number>();
+    
+    for (const user of users) {
+      const posts = await db.executeQuery(`
+        SELECT AVG(like_count + reply_count + retweet_count) as avg_engagement
+        FROM twitter_posts
+        WHERE user_id = $1
+      `, [user.user_id]);
+      
+      const avgEng = parseFloat(posts[0]?.avg_engagement || '0');
+      engagementScores.set(user.user_id, avgEng);
+    }
 
-rankings.sort((a, b) => b.influent_score - a.influent_score);
+    // 2. Build connection weights (simplified - full mesh)
+    const userIds = users.map((u: any) => u.user_id);
+    const connectionWeights = new Map<string, Map<string, number>>();
+    
+    for (const userId of userIds) {
+      const connections = new Map<string, number>();
+      for (const otherId of userIds) {
+        if (userId !== otherId) {
+          connections.set(otherId, 1.0);
+        }
+      }
+      connectionWeights.set(userId, connections);
+    }
+
+    // 3. Sentiment scores (neutral baseline)
+    const sentimentScores = new Map<string, number>();
+    for (const userId of userIds) {
+      sentimentScores.set(userId, 0.5);
+    }
+
+    // 4. Run INFLUENT iterative algorithm
+    console.log('🔄 Running INFLUENT algorithm...');
+    const { InfluentIterativeAlgorithm } = await import('./influent-iterative.js');
+    
+    const result = InfluentIterativeAlgorithm.computeWithConvergence(
+      userIds,
+      connectionWeights,
+      sentimentScores,
+      engagementScores,
+      0.85,   // dampening factor
+      1e-5,   // convergence threshold
+      50      // max iterations
+    );
+
+    // 5. Build rankings with real scores
+    const rankings = users.map((user: any) => {
+      const engagement = engagementScores.get(user.user_id) || 0;
+      const score = result.finalScores.get(user.user_id) || 0;
+      
+      // Store in cache
+      scoreCache.set(user.user_id, {
+        engagement: engagement,
+        influent_score: score
+      });
+      
+      return {
+        user_id: user.user_id,
+        display_name: user.display_name,
+        followers: user.followers,
+        engagement: engagement,
+        sentiment: 0.5,
+        influent_score: score
+      };
+    });
+
+    rankings.sort((a, b) => b.influent_score - a.influent_score);
+    
+    console.log(`✅ Analysis complete! Top score: ${rankings[0]?.influent_score.toFixed(4)}`);
 
     res.json({
       success: true,
@@ -189,7 +225,26 @@ rankings.sort((a, b) => b.influent_score - a.influent_score);
 app.get('/api/influencers', async (_req: express.Request, res: express.Response) => {
   try {
     const users = await db.getAllUsers();
-    res.json(Array.isArray(users) ? users : []);
+    
+    // Build response with cached scores
+    const influencers = users.map((user: any) => {
+      const cached = scoreCache.get(user.user_id);
+      
+      return {
+        user_id: user.user_id,
+        display_name: user.display_name,
+        followers: user.followers,
+        engagement: cached?.engagement || 0,
+        influent_score: cached?.influent_score || 0,
+        bio: user.bio,
+        location: user.location
+      };
+    });
+    
+    // Sort by score
+    influencers.sort((a, b) => b.influent_score - a.influent_score);
+    
+    res.json(influencers);
   } catch (error: any) {
     console.error('Influencers error:', error);
     res.json([]);
@@ -199,14 +254,18 @@ app.get('/api/influencers', async (_req: express.Request, res: express.Response)
 app.get('/api/network-data', async (_req: express.Request, res: express.Response) => {
   try {
     const users = await db.getAllUsers();
-    const nodes = users.slice(0, 50).map((user: any) => ({
-      id: user.user_id,
-      name: user.display_name,
-      followers: user.followers,
-      influenceScore: 0.5,
-      bio: user.bio,
-      location: user.location
-    }));
+    const nodes = users.slice(0, 50).map((user: any) => {
+      const cached = scoreCache.get(user.user_id);
+      
+      return {
+        id: user.user_id,
+        name: user.display_name,
+        followers: user.followers,
+        influenceScore: cached?.influent_score || 0,
+        bio: user.bio,
+        location: user.location
+      };
+    });
     res.json({ nodes, links: [] });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
