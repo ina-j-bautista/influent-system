@@ -20,6 +20,7 @@ const HomeScreen: React.FC = () => {
       region,
       startDate,
       endDate,
+      maxItems,  // ADD THIS LINE
       weightPreferences: {
         wi: likeWeight / 100,
         wc: commentWeight / 100,
