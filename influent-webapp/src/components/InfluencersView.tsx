@@ -50,10 +50,12 @@ const InfluencersView: React.FC = () => {
   };
 
   const sortedInfluencers = [...influencers]
-    .filter(inf => 
-      inf.display_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      inf.user_id.toLowerCase().includes(searchTerm.toLowerCase())
-    )
+    .filter(inf => {
+      const searchLower = searchTerm.toLowerCase();
+      const nameMatch = inf.display_name?.toLowerCase().includes(searchLower) || false;
+      const idMatch = inf.user_id?.toLowerCase().includes(searchLower) || false;
+      return nameMatch || idMatch;
+    })
     .sort((a, b) => {
       const aVal = a[sortField];
       const bVal = b[sortField];

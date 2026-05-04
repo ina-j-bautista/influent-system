@@ -23,7 +23,6 @@ const sentimentAdapter = new SentimentAdapter();
 
 console.log('✅ Modules loaded successfully');
 
-// Store scores in memory cache
 const scoreCache = new Map<string, { engagement: number; influent_score: number }>();
 
 interface RankedInfluencer {
@@ -37,12 +36,12 @@ interface RankedInfluencer {
 
 async function clearDatabase() {
   console.log('🗑️  Clearing existing data...');
-  
+
   try {
     await db.executeQuery('TRUNCATE twitter_interactions CASCADE');
     await db.executeQuery('TRUNCATE twitter_posts CASCADE');
     await db.executeQuery('TRUNCATE twitter_users CASCADE');
-    
+
     console.log('✅ Database cleared');
   } catch (error: any) {
     console.error('❌ Clear database error:', error);
@@ -62,7 +61,7 @@ async function runCompleteScrape(params: {
 
   try {
     console.log('📡 Scraping Twitter data...');
-    
+
     await runApifyScrape(params);
 
     console.log(`✅ Scrape completed`);
@@ -86,8 +85,6 @@ async function runCompleteScrape(params: {
   }
 }
 
-// API ENDPOINTS
-
 app.get('/api/stats', async (_req: express.Request, res: express.Response) => {
   try {
     const stats = await db.executeQuery(`
@@ -109,11 +106,32 @@ app.post('/api/analyze', async (req: express.Request, res: express.Response) => 
       keywords,
       startDate,
       endDate,
-      maxItems
+      maxItems,
+      weightPreferences,    // { wi, wc, ws } - engagement weights
+      sentimentImportance,  // dampening factor (d)
+      temporalDecay        // lambda for temporal decay
     } = req.body;
 
-    console.log('📊 Starting analysis pipeline...');
+    // Extract and validate weight preferences
+    const wi = weightPreferences?.wi || 0.33;  // like weight
+    const wc = weightPreferences?.wc || 0.33;  // comment/reply weight  
+    const ws = weightPreferences?.ws || 0.34;  // share/retweet weight
     
+    // Validate weights sum to ~1
+    const weightSum = wi + wc + ws;
+    if (Math.abs(weightSum - 1.0) > 0.01) {
+      console.warn(`⚠️  Weight sum is ${weightSum}, normalizing to 1.0`);
+    }
+
+    // Extract parameters with defaults
+    const dampeningFactor = sentimentImportance || 0.85;  // d in formula
+    const lambda = temporalDecay || 0.5;                   // λ for temporal decay
+
+    console.log('📊 Starting analysis pipeline...');
+    console.log(`   Dampening factor (d): ${dampeningFactor}`);
+    console.log(`   Temporal decay (λ): ${lambda}`);
+    console.log(`   Weights - Likes: ${(wi*100).toFixed(0)}%, Replies: ${(wc*100).toFixed(0)}%, Retweets: ${(ws*100).toFixed(0)}%`);
+
     await clearDatabase();
     scoreCache.clear();
 
@@ -132,49 +150,63 @@ app.post('/api/analyze', async (req: express.Request, res: express.Response) => 
     const users = await db.getAllUsers();
     console.log(`📊 Loaded ${users.length} users for analysis`);
 
-    // 1. Calculate engagement scores WITH temporal decay
     console.log('🧮 Computing engagement scores with temporal decay...');
     const engagementScores = new Map<string, number>();
-    const lambda = 0.5;
     const now = new Date();
-    
+
     for (const user of users) {
-      const posts = await db.executeQuery(`
-        SELECT 
-          like_count,
-          reply_count,
-          retweet_count,
-          created_at
-        FROM twitter_posts
-        WHERE user_id = $1
-      `, [user.user_id]);
-      
+  const posts = await db.executeQuery(`
+    SELECT 
+      like_count,
+      reply_count,
+      retweet_count,
+      created_at
+    FROM twitter_posts
+    WHERE user_id = $1
+      ${startDate ? `AND created_at >= $2` : ''}
+      ${endDate ? `AND created_at <= ${startDate ? '$3' : '$2'}` : ''}
+  `, startDate && endDate 
+      ? [user.user_id, startDate, endDate]
+      : startDate 
+        ? [user.user_id, startDate]
+        : endDate
+          ? [user.user_id, endDate]
+          : [user.user_id]
+  );
+
       if (posts.length === 0) {
         engagementScores.set(user.user_id, 0);
         continue;
       }
-      
+
       let totalDecayedEngagement = 0;
-      
+
       for (const post of posts) {
-        const rawEngagement = (post.like_count || 0) + (post.reply_count || 0) + (post.retweet_count || 0);
+        // Apply weighted engagement formula: wi*likes + wc*comments + ws*shares
+        const rawEngagement = 
+          (wi * (post.like_count || 0)) + 
+          (wc * (post.reply_count || 0)) + 
+          (ws * (post.retweet_count || 0));
+        
         const postDate = new Date(post.created_at);
         const daysSincePost = (now.getTime() - postDate.getTime()) / (1000 * 60 * 60 * 24);
+        
+        // Apply temporal decay with user-provided lambda
         const decayFactor = Math.exp(-lambda * daysSincePost);
         const decayedEngagement = rawEngagement * decayFactor;
+        
         totalDecayedEngagement += decayedEngagement;
       }
-      
+
       const avgDecayedEngagement = totalDecayedEngagement / posts.length;
       engagementScores.set(user.user_id, avgDecayedEngagement);
-      
-      console.log(`   ${user.user_id}: ${posts.length} posts, raw avg = ${avgDecayedEngagement.toFixed(2)}`);
+
+      console.log(`   ${user.user_id}: ${posts.length} posts, weighted avg = ${avgDecayedEngagement.toFixed(2)}`);
     }
 
-    // NORMALIZE engagement to [0, 1]
     const maxEngagement = Math.max(...Array.from(engagementScores.values()));
     console.log(`\n📊 Max engagement: ${maxEngagement.toFixed(2)}`);
-    
+
     if (maxEngagement > 0) {
       for (const [userId, eng] of engagementScores) {
         const normalized = eng / maxEngagement;
@@ -184,114 +216,101 @@ app.post('/api/analyze', async (req: express.Request, res: express.Response) => 
     }
     console.log('');
 
-    // 2. Build connection weights using thesis formula approximation
-    // W(v,u) = 0.4(reciprocity) + 0.4(interaction frequency) + 0.2(account credibility)
     const userIds = users.map((u: any) => u.user_id);
     const connectionWeights = new Map<string, Map<string, number>>();
     const userFollowers = new Map<string, number>();
     const userVerified = new Map<string, boolean>();
-    
-    // Store user data
+
     for (const user of users) {
       userFollowers.set(user.user_id, user.followers);
       userVerified.set(user.user_id, user.is_verified || false);
     }
-    
-    // Find max followers for normalization
+
     const maxFollowers = Math.max(...Array.from(userFollowers.values()));
-    
+
     for (const userId of userIds) {
       const connections = new Map<string, number>();
       let totalWeight = 0;
-      
+
       const vFollowers = userFollowers.get(userId) || 0;
-      
+
       for (const otherId of userIds) {
         if (userId !== otherId) {
           const uFollowers = userFollowers.get(otherId) || 0;
           const uVerified = userVerified.get(otherId) || false;
-          
-          // Reciprocity: follower ratio similarity (0-1)
+
           const followerRatio = Math.min(vFollowers, uFollowers) / Math.max(vFollowers, uFollowers, 1);
           const reciprocity = followerRatio;
-          
-          // Interaction frequency: use engagement score as proxy (already normalized 0-1)
+
           const interactionFreq = engagementScores.get(otherId) || 0;
-          
-          // Account credibility: follower count + verification
+
           const followerCredibility = uFollowers / maxFollowers;
           const verificationBonus = uVerified ? 0.2 : 0;
           const credibility = Math.min(followerCredibility + verificationBonus, 1.0);
-          
-          // Apply formula: W(v,u) = 0.4*reciprocity + 0.4*interaction + 0.2*credibility
+
           const weight = 0.4 * reciprocity + 0.4 * interactionFreq + 0.2 * credibility;
-          
+
           connections.set(otherId, weight);
           totalWeight += weight;
         }
       }
-      
-      // Normalize so weights sum to 1
+
       if (totalWeight > 0) {
         for (const [otherId, weight] of connections) {
           connections.set(otherId, weight / totalWeight);
         }
       }
-      
+
       connectionWeights.set(userId, connections);
     }
-    
+
     console.log('✅ Connection weights computed using W(v,u) formula\n');
 
-    // 3. Sentiment scores (neutral baseline)
     const sentimentScores = new Map<string, number>();
     for (const userId of userIds) {
       sentimentScores.set(userId, 0.5);
     }
 
-    // 4. Run INFLUENT algorithm
     console.log('🔄 Running INFLUENT algorithm...');
     const logger = new ConvergenceLogger();
     const { InfluentIterativeAlgorithm } = await import('./influent-iterative.js');
-    
+
+    // Use user-provided dampening factor
     const result = InfluentIterativeAlgorithm.computeWithConvergence(
       userIds,
       connectionWeights,
       sentimentScores,
       engagementScores,
-      0.85,
+      dampeningFactor,  // Using UI parameter!
       1e-6,
       200,
       logger
     );
-    
-    // Export convergence data
+
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     logger.exportToCSV(`./convergence-${timestamp}.csv`);
 
-    // 5. Build rankings
     const rankings = users.map((user: any) => {
       const engagement = engagementScores.get(user.user_id) || 0;
       const score = result.finalScores.get(user.user_id) || 0;
-      
-      // Store normalized values (0-1) in cache
+
       scoreCache.set(user.user_id, {
-        engagement: engagement,      // Keep as 0-1
-        influent_score: score        // Keep as 0-1
+        engagement: engagement,
+        influent_score: score
       });
-      
+
       return {
         user_id: user.user_id,
         display_name: user.display_name,
         followers: user.followers,
-        engagement: engagement * 100,  // Convert to percentage ONLY here
+        engagement: engagement * 100,
         sentiment: 0.5,
-        influent_score: score * 100     // Convert to percentage ONLY here
+        influent_score: score * 100
       };
     });
 
     rankings.sort((a, b) => b.influent_score - a.influent_score);
-    
+
     console.log(`✅ Analysis complete! Top score: ${rankings[0]?.influent_score.toFixed(2)}%`);
 
     res.json({
@@ -301,7 +320,12 @@ app.post('/api/analyze', async (req: express.Request, res: express.Response) => 
         totalUsers: users.length,
         totalPosts: scrapeResult.posts,
         keywords: Array.isArray(keywords) ? keywords : keywords.split(','),
-        scrapeTimestamp: new Date().toISOString()
+        scrapeTimestamp: new Date().toISOString(),
+        parameters: {
+          dampeningFactor,
+          temporalDecay: lambda,
+          weights: { likes: wi, comments: wc, shares: ws }
+        }
       }
     });
 
@@ -314,23 +338,23 @@ app.post('/api/analyze', async (req: express.Request, res: express.Response) => 
 app.get('/api/influencers', async (_req: express.Request, res: express.Response) => {
   try {
     const users = await db.getAllUsers();
-    
+
     const influencers = users.map((user: any) => {
       const cached = scoreCache.get(user.user_id);
-      
+
       return {
         user_id: user.user_id,
         display_name: user.display_name,
         followers: user.followers,
-        engagement: (cached?.engagement || 0) * 100,      // Convert to percentage
-        influent_score: (cached?.influent_score || 0) * 100,  // Convert to percentage
+        engagement: (cached?.engagement || 0) * 100,
+        influent_score: (cached?.influent_score || 0) * 100,
         bio: user.bio,
         location: user.location
       };
     });
-    
+
     influencers.sort((a, b) => b.influent_score - a.influent_score);
-    
+
     res.json(influencers);
   } catch (error: any) {
     console.error('Influencers error:', error);
@@ -343,7 +367,7 @@ app.get('/api/network-data', async (_req: express.Request, res: express.Response
     const users = await db.getAllUsers();
     const nodes = users.slice(0, 50).map((user: any) => {
       const cached = scoreCache.get(user.user_id);
-      
+
       return {
         id: user.user_id,
         name: user.display_name,
@@ -382,13 +406,11 @@ app.get('/api/analytics', async (_req: express.Request, res: express.Response) =
       GROUP BY range
     `);
 
-    // Convert post_count from string to number
     const formattedTemporalData = temporalData.map((row: any) => ({
       date: row.date,
       post_count: parseInt(row.post_count, 10)
     }));
 
-    // Ensure all follower ranges are present and convert counts to numbers
     const allRanges = ['0-1K', '1K-10K', '10K-100K', '100K+'];
     const formattedDistribution = allRanges.map(range => {
       const found = scoreDistribution.find((r: any) => r.range === range);

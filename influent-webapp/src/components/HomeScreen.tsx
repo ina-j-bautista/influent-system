@@ -20,7 +20,8 @@ const HomeScreen: React.FC = () => {
       region,
       startDate,
       endDate,
-      maxItems,  // ADD THIS LINE
+      maxItems,  
+
       weightPreferences: {
         wi: likeWeight / 100,
         wc: commentWeight / 100,
@@ -37,7 +38,7 @@ const HomeScreen: React.FC = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(params)
       });
-      
+
       const data = await response.json();
       console.log('Analysis complete:', data);
       alert('Analysis complete! Check console for results.');
@@ -50,7 +51,7 @@ const HomeScreen: React.FC = () => {
   return (
     <div className="min-h-screen flex items-center justify-center p-8">
       <div className="w-full max-w-2xl">
-        {/* Header */}
+        {}
         <div className="text-center mb-12">
           <div className="w-16 h-16 mx-auto mb-4 border-2 border-stone-900 flex items-center justify-center">
             <div className="w-10 h-10 border border-stone-900" style={{ transform: 'rotate(45deg)' }} />
@@ -59,9 +60,9 @@ const HomeScreen: React.FC = () => {
           <p className="text-stone-500">Configure your Twitter influencer mapping parameters</p>
         </div>
 
-        {/* Form */}
+        {}
         <div className="space-y-6">
-          {/* Date Range */}
+          {}
           <div>
             <label className="flex items-center gap-2 text-sm font-medium text-stone-700 mb-2">
               <Calendar size={16} />
@@ -85,12 +86,12 @@ const HomeScreen: React.FC = () => {
             </div>
           </div>
 
-          {/* Topic Keywords */}
+          {}
           <div>
-            {/* Max Items to Scrape */}
+            {}
 <div>
   <label className="text-sm font-medium text-stone-700 mb-2 block">
-    🔢 Max Items to Scrape
+    🔢 Target Number To Scrape
   </label>
   <input
     type="number"
@@ -102,7 +103,7 @@ const HomeScreen: React.FC = () => {
     max="1000"
   />
   <p className="text-xs text-stone-500 mt-1">
-    Maximum number of tweets/posts to collect from Twitter
+    Target number of data points to collect from Twitter
   </p>
 </div>
             <label className="text-sm font-medium text-stone-700 mb-2 block">
@@ -117,26 +118,13 @@ const HomeScreen: React.FC = () => {
             />
           </div>
 
-          {/* Region */}
-          <div>
-            <label className="text-sm font-medium text-stone-700 mb-2 block">
-              📍 Region/Audience
-            </label>
-            <input
-              type="text"
-              value={region}
-              onChange={(e) => setRegion(e.target.value)}
-              className="w-full px-4 py-3 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-stone-900"
-              placeholder="e.g., Philippines, Southeast Asia, Global"
-            />
-          </div>
 
-          {/* Weight Preferences */}
+          {}
           <div>
             <label className="text-sm font-medium text-stone-700 mb-4 block">
               ⚖️ Weight Preferences
             </label>
-            
+
             <div className="space-y-4">
               <div>
                 <div className="flex justify-between items-center mb-2">
@@ -185,7 +173,7 @@ const HomeScreen: React.FC = () => {
             </div>
           </div>
 
-          {/* Sentiment Importance */}
+          {}
           <div>
             <div className="flex justify-between items-center mb-2">
               <label className="text-sm font-medium text-stone-700">
@@ -204,7 +192,7 @@ const HomeScreen: React.FC = () => {
             />
           </div>
 
-          {/* Temporal Decay */}
+          {}
           <div>
             <div className="flex justify-between items-center mb-2">
               <label className="text-sm font-medium text-stone-700">
@@ -223,7 +211,7 @@ const HomeScreen: React.FC = () => {
             />
           </div>
 
-          {/* Sentiment Pipeline Selection */}
+          {}
           <div>
             <label className="text-sm font-medium text-stone-700 mb-3 block">
               🔬 Sentiment Analysis Pipeline
@@ -249,7 +237,7 @@ const HomeScreen: React.FC = () => {
             </div>
           </div>
 
-          {/* Submit Button */}
+          {}
           <button
             onClick={handleGenerate}
             className="w-full py-4 bg-stone-900 text-white rounded-lg font-medium hover:bg-stone-800 transition-colors"
