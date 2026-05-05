@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Filter, ChevronDown, ChevronUp, X, Share2 } from 'lucide-react';
+import { Search, Filter, ChevronDown, ChevronUp, X, Share2, CheckCircle } from 'lucide-react';
 
 interface Influencer {
   user_id: string;
@@ -9,6 +9,8 @@ interface Influencer {
   influent_score: number;
   bio?: string;
   location?: string;
+  is_verified?: boolean;
+  is_blue_verified?: boolean;
 }
 
 const InfluencersView: React.FC = () => {
@@ -24,21 +26,21 @@ const InfluencersView: React.FC = () => {
   }, []);
 
   const fetchInfluencers = async () => {
-  try {
-    const response = await fetch('http://localhost:3001/api/influencers');
-    const data = await response.json();
-    
-    if (Array.isArray(data)) {
-      setInfluencers(data);
-    } else {
-      console.error('API returned non-array:', data);
-      setInfluencers([]); 
+    try {
+      const response = await fetch('http://localhost:3001/api/influencers');
+      const data = await response.json();
+      
+      if (Array.isArray(data)) {
+        setInfluencers(data);
+      } else {
+        console.error('API returned non-array:', data);
+        setInfluencers([]); 
+      }
+    } catch (error) {
+      console.error('Failed to fetch influencers:', error);
+      setInfluencers([]);
     }
-  } catch (error) {
-    console.error('Failed to fetch influencers:', error);
-    setInfluencers([]);
-  }
-};
+  };
 
   const handleSort = (field: 'influent_score' | 'followers' | 'engagement') => {
     if (sortField === field) {
@@ -66,6 +68,24 @@ const InfluencersView: React.FC = () => {
     if (sortField !== field) return null;
     return sortDirection === 'asc' ? <ChevronUp size={16} /> : <ChevronDown size={16} />;
   };
+
+  const VerificationBadge = ({ influencer }: { influencer: Influencer }) => {
+  if (influencer.is_verified) {
+    return (
+      <span title="Verified Account">
+        <CheckCircle size={16} className="text-blue-500" />
+      </span>
+    );
+  }
+  if (influencer.is_blue_verified) {
+    return (
+      <span title="Twitter Blue Subscriber">
+        <CheckCircle size={16} className="text-amber-500" />
+      </span>
+    );
+  }
+  return null;
+};
 
   return (
     <div className="h-screen flex">
@@ -137,9 +157,6 @@ const InfluencersView: React.FC = () => {
                     Name
                   </div>
                 </th>
-                <th className="text-left px-6 py-4 text-sm font-semibold text-stone-700">
-                  Handle
-                </th>
                 <th 
                   className="text-left px-6 py-4 text-sm font-semibold text-stone-700 cursor-pointer hover:bg-stone-100"
                   onClick={() => handleSort('followers')}
@@ -170,7 +187,7 @@ const InfluencersView: React.FC = () => {
               </tr>
             </thead>
             <tbody>
-              {sortedInfluencers.map((influencer, index) => (
+              {sortedInfluencers.map((influencer) => (
                 <tr
                   key={influencer.user_id}
                   onClick={() => setSelectedInfluencer(influencer)}
@@ -183,10 +200,12 @@ const InfluencersView: React.FC = () => {
                       <div className="w-10 h-10 border border-stone-300 flex items-center justify-center flex-shrink-0">
                         <div className="w-6 h-6 border border-stone-300" style={{ transform: 'rotate(45deg)' }} />
                       </div>
-                      <span className="font-medium text-stone-900">{influencer.display_name}</span>
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium text-stone-900">{influencer.display_name}</span>
+                        <VerificationBadge influencer={influencer} />
+                      </div>
                     </div>
                   </td>
-                  <td className="px-6 py-4 text-stone-600">@{influencer.user_id}</td>
                   <td className="px-6 py-4 text-stone-900">{influencer.followers.toLocaleString()}</td>
                   <td className="px-6 py-4 text-stone-900">
                     {influencer.engagement.toFixed(1)}%
@@ -244,10 +263,13 @@ const InfluencersView: React.FC = () => {
 
             {/* User Info */}
             <div className="text-center mb-6">
-              <h4 className="text-xl font-semibold text-stone-900 mb-1">
-                {selectedInfluencer.display_name}
-              </h4>
-              <p className="text-stone-600">@{selectedInfluencer.user_id}</p>
+              <div className="flex items-center justify-center gap-2 mb-1">
+                <h4 className="text-xl font-semibold text-stone-900">
+                  {selectedInfluencer.display_name}
+                </h4>
+                <VerificationBadge influencer={selectedInfluencer} />
+              </div>
+              <p className="text-stone-600 text-sm">ID: {selectedInfluencer.user_id}</p>
               {selectedInfluencer.location && (
                 <p className="text-sm text-stone-500 mt-2 flex items-center justify-center gap-1">
                   <span>📍</span> {selectedInfluencer.location}
@@ -284,53 +306,6 @@ const InfluencersView: React.FC = () => {
                 <p className="text-2xl font-semibold text-stone-900">
                   {selectedInfluencer.influent_score.toFixed(1)}%
                 </p>
-              </div>
-            </div>
-
-            {/* Key Topics */}
-            <div className="mb-6">
-              <h5 className="text-sm font-semibold text-stone-900 mb-3">Key Topics</h5>
-              <div className="flex flex-wrap gap-2">
-                <span className="px-3 py-1 bg-stone-100 text-stone-700 text-sm rounded-full border border-stone-200">
-                  Keyword
-                </span>
-                <span className="px-3 py-1 bg-stone-100 text-stone-700 text-sm rounded-full border border-stone-200">
-                  Keyword
-                </span>
-              </div>
-            </div>
-
-            {/* Component Breakdown */}
-            <div className="mb-6">
-              <h5 className="text-sm font-semibold text-stone-900 mb-3">Score Breakdown</h5>
-              <div className="space-y-3">
-                <div>
-                  <div className="flex justify-between text-xs text-stone-600 mb-1">
-                    <span>Sentiment Component</span>
-                    <span>0.XX</span>
-                  </div>
-                  <div className="bg-stone-200 h-2 rounded-full overflow-hidden">
-                    <div className="bg-stone-700 h-full" style={{ width: '60%' }} />
-                  </div>
-                </div>
-                <div>
-                  <div className="flex justify-between text-xs text-stone-600 mb-1">
-                    <span>Engagement Component</span>
-                    <span>0.XX</span>
-                  </div>
-                  <div className="bg-stone-200 h-2 rounded-full overflow-hidden">
-                    <div className="bg-stone-700 h-full" style={{ width: '75%' }} />
-                  </div>
-                </div>
-                <div>
-                  <div className="flex justify-between text-xs text-stone-600 mb-1">
-                    <span>Connection Component</span>
-                    <span>0.XX</span>
-                  </div>
-                  <div className="bg-stone-200 h-2 rounded-full overflow-hidden">
-                    <div className="bg-stone-700 h-full" style={{ width: '85%' }} />
-                  </div>
-                </div>
               </div>
             </div>
 

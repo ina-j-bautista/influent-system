@@ -3,8 +3,11 @@ import cors from 'cors';
 import 'dotenv/config';
 import { createDatabaseConnection } from './database-adapter.ts';
 import { SentimentAdapter } from './sentiment-adapter.ts';
-import { runApifyScrape } from './apify-scraper.ts';
+import { exec } from 'child_process';
+import { promisify } from 'util';
 import { ConvergenceLogger } from './export-convergence.js';
+
+const execAsync = promisify(exec);
 
 const app = express();
 const PORT = 3001;
@@ -50,33 +53,80 @@ async function clearDatabase() {
 
 async function runCompleteScrape(params: {
   keywords: string[];
+  language: string;
   minFollowers: number;
   minAvgLikes: number;
+  maxAccounts?: number;
+  tweetsPerAccount?: number;
   startDate: string;
   endDate: string;
-  language: string;
   maxItems: number;
 }) {
   console.log('🚀 Starting complete scrape pipeline...');
 
   try {
-    console.log('📡 Scraping Twitter data...');
+    console.log('📡 Calling Python scraper...');
 
-    await runApifyScrape(params);
+    const pythonParams = JSON.stringify({
+      keywords: params.keywords,
+      language: params.language,
+      minFollowers: params.minFollowers,
+      minAvgLikes: params.minAvgLikes,
+      maxAccounts: params.maxAccounts || 20,
+      tweetsPerAccount: params.tweetsPerAccount || 20,
+      startDate: params.startDate,
+      endDate: params.endDate,
+      maxItems: params.maxItems
+    });
+
+    // Call Python script
+    // On Windows, use the Python 3.11 installation explicitly
+    const pythonCmd = process.platform === 'win32' 
+      ? 'C:\\Program Files\\Python311\\python.exe'
+      : 'python3';
+    
+    // Escape JSON for Windows command line (use double quotes and escape inner quotes)
+    const escapedParams = process.platform === 'win32'
+      ? pythonParams.replace(/"/g, '\\"')
+      : pythonParams;
+    
+    const command = process.platform === 'win32'
+      ? `"${pythonCmd}" influent_scraper.py "${escapedParams}"`
+      : `${pythonCmd} influent_scraper.py '${pythonParams}'`;
+    
+    // Pass environment variables to child process
+    const { stdout, stderr } = await execAsync(command, {
+      env: {
+        ...process.env,
+        APIFY_API_TOKEN: process.env.APIFY_API_TOKEN,
+        NEON_CONNECTION_STRING: process.env.NEON_CONNECTION_STRING
+      }
+    });
+    
+    if (stderr && !stderr.includes('[apify')) {
+      console.error('Python stderr:', stderr);
+    }
+    
+    console.log('Python output:', stdout);
+    
+    // Parse result from last line of output
+    const lines = stdout.trim().split('\n');
+    const lastLine = lines[lines.length - 1];
+    const result = JSON.parse(lastLine);
+    
+    if (!result.success) {
+      throw new Error(result.error || 'Python scraper failed');
+    }
 
     console.log(`✅ Scrape completed`);
-
-    const userCount = await db.executeQuery('SELECT COUNT(*) as count FROM twitter_users');
-    const postCount = await db.executeQuery('SELECT COUNT(*) as count FROM twitter_posts');
-
     console.log(`📊 Database now has:`);
-    console.log(`   - ${userCount[0].count} users`);
-    console.log(`   - ${postCount[0].count} posts`);
+    console.log(`   - ${result.users} users`);
+    console.log(`   - ${result.posts} posts`);
 
     return {
       success: true,
-      users: parseInt(userCount[0].count),
-      posts: parseInt(postCount[0].count)
+      users: result.users,
+      posts: result.posts
     };
 
   } catch (error: any) {
@@ -104,28 +154,30 @@ app.post('/api/analyze', async (req: express.Request, res: express.Response) => 
   try {
     const {
       keywords,
+      language,
+      minFollowers,
+      minAvgLikes,
+      maxAccounts,
+      tweetsPerAccount,
       startDate,
       endDate,
       maxItems,
-      weightPreferences,    // { wi, wc, ws } - engagement weights
-      sentimentImportance,  // dampening factor (d)
-      temporalDecay        // lambda for temporal decay
+      weightPreferences,
+      sentimentImportance,
+      temporalDecay
     } = req.body;
 
-    // Extract and validate weight preferences
-    const wi = weightPreferences?.wi || 0.33;  // like weight
-    const wc = weightPreferences?.wc || 0.33;  // comment/reply weight  
-    const ws = weightPreferences?.ws || 0.34;  // share/retweet weight
+    const wi = weightPreferences?.wi || 0.33;
+    const wc = weightPreferences?.wc || 0.33;
+    const ws = weightPreferences?.ws || 0.34;
     
-    // Validate weights sum to ~1
     const weightSum = wi + wc + ws;
     if (Math.abs(weightSum - 1.0) > 0.01) {
       console.warn(`⚠️  Weight sum is ${weightSum}, normalizing to 1.0`);
     }
 
-    // Extract parameters with defaults
-    const dampeningFactor = sentimentImportance || 0.85;  // d in formula
-    const lambda = temporalDecay || 0.5;                   // λ for temporal decay
+    const dampeningFactor = sentimentImportance || 0.85;
+    const lambda = temporalDecay || 0.5;
 
     console.log('📊 Starting analysis pipeline...');
     console.log(`   Dampening factor (d): ${dampeningFactor}`);
@@ -137,11 +189,13 @@ app.post('/api/analyze', async (req: express.Request, res: express.Response) => 
 
     const scrapeResult = await runCompleteScrape({
       keywords: Array.isArray(keywords) ? keywords : keywords.split(',').map((k: string) => k.trim()),
-      minFollowers: 0,
-      minAvgLikes: 0,
+      language: language || 'en',
+      minFollowers: minFollowers || 0,
+      minAvgLikes: minAvgLikes || 0,
+      maxAccounts: maxAccounts || 20,
+      tweetsPerAccount: tweetsPerAccount || 20,
       startDate: startDate || '',
       endDate: endDate || '',
-      language: 'en',
       maxItems: maxItems || 100
     });
 
@@ -156,23 +210,14 @@ app.post('/api/analyze', async (req: express.Request, res: express.Response) => 
 
     for (const user of users) {
   const posts = await db.executeQuery(`
-    SELECT 
-      like_count,
-      reply_count,
-      retweet_count,
-      created_at
-    FROM twitter_posts
-    WHERE user_id = $1
-      ${startDate ? `AND created_at >= $2` : ''}
-      ${endDate ? `AND created_at <= ${startDate ? '$3' : '$2'}` : ''}
-  `, startDate && endDate 
-      ? [user.user_id, startDate, endDate]
-      : startDate 
-        ? [user.user_id, startDate]
-        : endDate
-          ? [user.user_id, endDate]
-          : [user.user_id]
-  );
+  SELECT 
+    like_count,
+    reply_count,
+    retweet_count,
+    created_at
+  FROM twitter_posts
+  WHERE user_id = $1
+`, [user.user_id]);
 
       if (posts.length === 0) {
         engagementScores.set(user.user_id, 0);
@@ -182,7 +227,6 @@ app.post('/api/analyze', async (req: express.Request, res: express.Response) => 
       let totalDecayedEngagement = 0;
 
       for (const post of posts) {
-        // Apply weighted engagement formula: wi*likes + wc*comments + ws*shares
         const rawEngagement = 
           (wi * (post.like_count || 0)) + 
           (wc * (post.reply_count || 0)) + 
@@ -191,7 +235,6 @@ app.post('/api/analyze', async (req: express.Request, res: express.Response) => 
         const postDate = new Date(post.created_at);
         const daysSincePost = (now.getTime() - postDate.getTime()) / (1000 * 60 * 60 * 24);
         
-        // Apply temporal decay with user-provided lambda
         const decayFactor = Math.exp(-lambda * daysSincePost);
         const decayedEngagement = rawEngagement * decayFactor;
         
@@ -275,13 +318,12 @@ app.post('/api/analyze', async (req: express.Request, res: express.Response) => 
     const logger = new ConvergenceLogger();
     const { InfluentIterativeAlgorithm } = await import('./influent-iterative.js');
 
-    // Use user-provided dampening factor
     const result = InfluentIterativeAlgorithm.computeWithConvergence(
       userIds,
       connectionWeights,
       sentimentScores,
       engagementScores,
-      dampeningFactor,  // Using UI parameter!
+      dampeningFactor,
       1e-6,
       200,
       logger
@@ -343,14 +385,16 @@ app.get('/api/influencers', async (_req: express.Request, res: express.Response)
       const cached = scoreCache.get(user.user_id);
 
       return {
-        user_id: user.user_id,
-        display_name: user.display_name,
-        followers: user.followers,
-        engagement: (cached?.engagement || 0) * 100,
-        influent_score: (cached?.influent_score || 0) * 100,
-        bio: user.bio,
-        location: user.location
-      };
+      user_id: user.user_id,
+      display_name: user.display_name,
+      followers: user.followers,
+      engagement: (cached?.engagement || 0) * 100,
+      influent_score: (cached?.influent_score || 0) * 100,
+      bio: user.bio,
+      location: user.location,
+      is_verified: user.is_verified,        
+      is_blue_verified: user.is_blue_verified  
+    };
     });
 
     influencers.sort((a, b) => b.influent_score - a.influent_score);
