@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, X, Filter, Maximize2 } from 'lucide-react';
+import { Search, X, Filter, Download, ChevronDown } from 'lucide-react';
 import * as d3 from 'd3';
 
 interface Influencer {
@@ -10,6 +10,8 @@ interface Influencer {
   influent_score: number;
   bio?: string;
   location?: string;
+  is_verified?: boolean;
+  is_blue_verified?: boolean;
 }
 
 interface Node extends d3.SimulationNodeDatum {
@@ -18,44 +20,116 @@ interface Node extends d3.SimulationNodeDatum {
   followers: number;
   influenceScore: number;
   type: 'keyword' | 'influencer';
+  keyword?: string;
 }
 
 interface Link extends d3.SimulationLinkDatum<Node> {
   source: string | Node;
   target: string | Node;
+  type: 'keyword-link' | 'interaction';
 }
 
 const NetworkView: React.FC = () => {
   const [influencers, setInfluencers] = useState<Influencer[]>([]);
   const [selectedInfluencer, setSelectedInfluencer] = useState<Influencer | null>(null);
-  const [keyword, setKeyword] = useState('AI');
+  const [keywords, setKeywords] = useState<string[]>(['AI']);
+  const [userKeywords, setUserKeywords] = useState<Map<string, Set<string>>>(new Map());
+  const [interactions, setInteractions] = useState<Array<{from_user: string, to_user: string}>>([]); 
   const svgRef = useRef<SVGSVGElement>(null);
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
+  const [filterDropdown, setFilterDropdown] = useState(false);
+
+  // Filter states
+  const [excludeBlueVerified, setExcludeBlueVerified] = useState(false);
+  const [scoreRanges, setScoreRanges] = useState({
+    high: true,
+    medium: true,
+    low: true
+  });
 
   useEffect(() => {
-    fetchInfluencers();
+    fetchNetworkData();
   }, []);
 
   useEffect(() => {
     if (influencers.length > 0) {
       renderNetwork();
     }
-  }, [influencers, dimensions]);
+  }, [influencers, keywords, interactions, dimensions, excludeBlueVerified, scoreRanges]);
 
-  const fetchInfluencers = async () => {
+  const fetchNetworkData = async () => {
     try {
-      const response = await fetch('http://localhost:3001/api/influencers');
-      const data = await response.json();
-      if (Array.isArray(data)) {
-        setInfluencers(data);
+      const influencersResponse = await fetch('http://localhost:3001/api/influencers');
+      const influencersData = await influencersResponse.json();
+      if (Array.isArray(influencersData)) {
+        setInfluencers(influencersData);
+      }
+
+      const networkResponse = await fetch('http://localhost:3001/api/network-data');
+      const networkData = await networkResponse.json();
+      
+      if (networkData.keywords && networkData.keywords.length > 0) {
+        setKeywords(networkData.keywords);
+      }
+      
+      if (networkData.userKeywords) {
+        const ukMap = new Map<string, Set<string>>();
+        Object.entries(networkData.userKeywords).forEach(([user, kws]: [string, any]) => {
+          ukMap.set(user, new Set(kws));
+        });
+        setUserKeywords(ukMap);
+      }
+      
+      if (networkData.interactions) {
+        setInteractions(networkData.interactions);
       }
     } catch (error) {
-      console.error('Failed to fetch influencers:', error);
+      console.error('Failed to fetch network data:', error);
+    }
+  };
+
+  const applyFilters = (influencer: Influencer): boolean => {
+    if (excludeBlueVerified && influencer.is_blue_verified) {
+      return false;
+    }
+
+    const score = influencer.influent_score;
+    if (score >= 80 && !scoreRanges.high) return false;
+    if (score >= 50 && score < 80 && !scoreRanges.medium) return false;
+    if (score < 50 && !scoreRanges.low) return false;
+
+    return true;
+  };
+
+  const filteredInfluencers = influencers.filter(applyFilters);
+
+  const exportFullCalculation = async () => {
+    try {
+      const response = await fetch('http://localhost:3001/api/export/full-calculation', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          excludeBlueVerified,
+          scoreRanges,
+          userIds: filteredInfluencers.map(inf => inf.user_id)
+        })
+      });
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `influent-network-calculation-${new Date().toISOString().split('T')[0]}.csv`;
+      a.click();
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Export failed:', error);
+      alert('Export failed. Please try again.');
     }
   };
 
   const renderNetwork = () => {
-    if (!svgRef.current || influencers.length === 0) return;
+    if (!svgRef.current || filteredInfluencers.length === 0) return;
 
     const svg = d3.select(svgRef.current);
     svg.selectAll('*').remove();
@@ -63,36 +137,56 @@ const NetworkView: React.FC = () => {
     const width = dimensions.width;
     const height = dimensions.height;
 
-    // Create nodes: central keyword + influencers
-    const nodes: Node[] = [
-      {
-        id: 'keyword',
-        name: keyword,
-        followers: 0,
-        influenceScore: 100,
-        type: 'keyword',
-        x: width / 2,
-        y: height / 2
-      },
-      ...influencers.map(inf => ({
-        id: inf.user_id,
-        name: inf.display_name,
-        followers: inf.followers,
-        influenceScore: inf.influent_score,
-        type: 'influencer' as const
-      }))
-    ];
-
-    // Create links: all influencers connect to keyword
-    const links: Link[] = influencers.map(inf => ({
-      source: 'keyword',
-      target: inf.user_id
+    const keywordNodes: Node[] = keywords.map((kw) => ({
+      id: `keyword-${kw}`,
+      name: kw,
+      followers: 0,
+      influenceScore: 100,
+      type: 'keyword',
+      keyword: kw
     }));
 
-    // Create force simulation
+    const influencerNodes: Node[] = filteredInfluencers.map(inf => ({
+      id: inf.user_id,
+      name: inf.display_name,
+      followers: inf.followers,
+      influenceScore: inf.influent_score,
+      type: 'influencer'
+    }));
+
+    const nodes = [...keywordNodes, ...influencerNodes];
+
+    const keywordLinks: Link[] = [];
+    filteredInfluencers.forEach(inf => {
+      const userKws = userKeywords.get(inf.user_id) || new Set(keywords);
+      userKws.forEach(kw => {
+        keywordLinks.push({
+          source: `keyword-${kw}`,
+          target: inf.user_id,
+          type: 'keyword-link'
+        });
+      });
+    });
+
+    const interactionLinks: Link[] = interactions
+      .filter(i => {
+        const sourceExists = filteredInfluencers.some(inf => inf.user_id === i.from_user);
+        const targetExists = filteredInfluencers.some(inf => inf.user_id === i.to_user);
+        return sourceExists && targetExists;
+      })
+      .map(i => ({
+        source: i.from_user,
+        target: i.to_user,
+        type: 'interaction'
+      }));
+
+    const links = [...keywordLinks, ...interactionLinks];
+
     const simulation = d3.forceSimulation(nodes)
-      .force('link', d3.forceLink<Node, Link>(links).id(d => d.id).distance(150))
-      .force('charge', d3.forceManyBody().strength(-300))
+      .force('link', d3.forceLink<Node, Link>(links).id(d => d.id).distance(d => {
+        return d.type === 'keyword-link' ? 200 : 100;
+      }))
+      .force('charge', d3.forceManyBody().strength(-400))
       .force('center', d3.forceCenter(width / 2, height / 2))
       .force('collision', d3.forceCollide().radius(d => {
         const node = d as Node;
@@ -100,10 +194,8 @@ const NetworkView: React.FC = () => {
         return Math.sqrt(node.followers / 10000) + 20;
       }));
 
-    // Create container group
     const g = svg.append('g');
 
-    // Add zoom behavior
     const zoom = d3.zoom<SVGSVGElement, unknown>()
       .scaleExtent([0.5, 3])
       .on('zoom', (event) => {
@@ -112,22 +204,20 @@ const NetworkView: React.FC = () => {
 
     svg.call(zoom);
 
-    // Draw links
     const link = g.append('g')
       .selectAll('line')
       .data(links)
       .join('line')
-      .attr('stroke', '#d6d3d1')
-      .attr('stroke-width', 2)
-      .attr('stroke-opacity', 0.6);
+      .attr('stroke', d => d.type === 'keyword-link' ? '#d6d3d1' : '#22c55e')
+      .attr('stroke-width', d => d.type === 'keyword-link' ? 2 : 1.5)
+      .attr('stroke-opacity', d => d.type === 'keyword-link' ? 0.4 : 0.6)
+      .attr('stroke-dasharray', d => d.type === 'interaction' ? '5,5' : '0');
 
-    // Draw nodes
     const node = g.append('g')
       .selectAll('g')
       .data(nodes)
       .join('g');
 
-    // Add drag behavior
     const drag = d3.drag<SVGGElement, Node>()
       .on('start', (event, d) => {
         if (!event.active) simulation.alphaTarget(0.3).restart();
@@ -146,56 +236,49 @@ const NetworkView: React.FC = () => {
 
     node.call(drag as any);
 
-    // Add circles
-    // Add circles
-node.append('circle')
-  .attr('r', d => {
-    if (d.type === 'keyword') return 50;
-    return Math.sqrt(d.followers / 10000) + 15;
-  })
-  .attr('fill', d => {
-    if (d.type === 'keyword') return '#6366f1';
-    
-    const influencerNodes = nodes.filter(n => n.type === 'influencer');
-    const minScore = Math.min(...influencerNodes.map(n => n.influenceScore));
-    const maxScore = Math.max(...influencerNodes.map(n => n.influenceScore));
-    const normalized = (d.influenceScore - minScore) / (maxScore - minScore || 1);
-    const lightness = 75 - (normalized * 40);
-    
-    return `hsl(260, 60%, ${lightness}%)`;
-  })
-  .attr('stroke', '#4f46e5')
-  .attr('stroke-width', 2)
-  .attr('cursor', d => d.type === 'influencer' ? 'pointer' : 'default')
-  .on('click', (event, d) => {
-    event.stopPropagation();  // Prevent event bubbling
-    if (d.type === 'influencer') {
-      const inf = influencers.find(i => i.user_id === d.id);
-      if (inf) {
-        console.log('Clicked influencer:', inf);  // Debug log
-        setSelectedInfluencer(inf);
-      }
-    }
-  })
-  .on('mouseover', function(event, d) {
-    if (d.type === 'influencer') {
-      d3.select(this)
-        .transition()
-        .duration(200)
-        .attr('stroke-width', 3)
-        .attr('stroke', '#818cf8');
-    }
-  })
-  .on('mouseout', function() {
-    d3.select(this)
-      .transition()
-      .duration(200)
-      .attr('stroke-width', 2)
-      .attr('stroke', '#4f46e5');
-  });
+    node.append('circle')
+      .attr('r', d => {
+        if (d.type === 'keyword') return 50;
+        return Math.sqrt(d.followers / 10000) + 15;
+      })
+      .attr('fill', d => {
+        if (d.type === 'keyword') return '#6366f1';
 
-    // Add labels
-    // Add labels
+        const influencerNodes = nodes.filter(n => n.type === 'influencer');
+        const minScore = Math.min(...influencerNodes.map(n => n.influenceScore));
+        const maxScore = Math.max(...influencerNodes.map(n => n.influenceScore));
+        const normalized = (d.influenceScore - minScore) / (maxScore - minScore || 1);
+        const lightness = 75 - (normalized * 40);
+
+        return `hsl(260, 60%, ${lightness}%)`;
+      })
+      .attr('stroke', '#4f46e5')
+      .attr('stroke-width', 2)
+      .attr('cursor', d => d.type === 'influencer' ? 'pointer' : 'default')
+      .on('click', (event, d) => {
+        event.stopPropagation();
+        if (d.type === 'influencer') {
+          const inf = filteredInfluencers.find(i => i.user_id === d.id);
+          if (inf) setSelectedInfluencer(inf);
+        }
+      })
+      .on('mouseover', function(event, d) {
+        if (d.type === 'influencer') {
+          d3.select(this)
+            .transition()
+            .duration(200)
+            .attr('stroke-width', 3)
+            .attr('stroke', '#818cf8');
+        }
+      })
+      .on('mouseout', function() {
+        d3.select(this)
+          .transition()
+          .duration(200)
+          .attr('stroke-width', 2)
+          .attr('stroke', '#4f46e5');
+      });
+
     node.append('text')
       .text(d => d.name)
       .attr('text-anchor', 'middle')
@@ -206,12 +289,12 @@ node.append('circle')
       })
       .attr('font-size', d => d.type === 'keyword' ? '14px' : '12px')
       .attr('font-weight', d => d.type === 'keyword' ? '600' : '500')
-      .attr('fill', '#ffffff')  // White text
-      .attr('stroke', '#000000')  // Black border
-      .attr('stroke-width', '0.5px')  // Thin border
-      .attr('paint-order', 'stroke')  // Draw stroke behind fill
+      .attr('fill', '#ffffff')
+      .attr('stroke', '#000000')
+      .attr('stroke-width', '0.5px')
+      .attr('paint-order', 'stroke')
       .attr('pointer-events', 'none');
-    // Add follower count for influencers
+
     node.filter(d => d.type === 'influencer')
       .append('text')
       .text(d => {
@@ -222,10 +305,9 @@ node.append('circle')
       .attr('text-anchor', 'middle')
       .attr('dy', -5)
       .attr('font-size', '10px')
-      .attr('fill', '#6366f1') // Purple-blue
+      .attr('fill', '#6366f1')
       .attr('pointer-events', 'none');
 
-    // Update positions on tick
     simulation.on('tick', () => {
       link
         .attr('x1', d => (d.source as Node).x!)
@@ -255,38 +337,88 @@ node.append('circle')
 
   return (
     <div className="h-screen flex">
-      {/* Main Network View */}
       <div className="flex-1 flex flex-col bg-stone-50">
-        {/* Header */}
         <div className="bg-white border-b border-stone-200 p-6">
           <div className="flex items-center justify-between">
             <div>
               <h2 className="text-2xl font-semibold text-stone-900 mb-1">Network View</h2>
-              <p className="text-sm text-stone-600">Interactive influence network visualization</p>
+              <p className="text-sm text-stone-600">
+                {keywords.length} keyword{keywords.length !== 1 ? 's' : ''}: {keywords.join(', ')}
+              </p>
             </div>
             <div className="flex items-center gap-3">
+              {/* Filter Dropdown */}
               <div className="relative">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-stone-400" size={18} />
-                <input
-                  type="text"
-                  value={keyword}
-                  onChange={(e) => setKeyword(e.target.value)}
-                  placeholder="Central keyword..."
-                  className="pl-10 pr-4 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-stone-900"
-                />
+                <button
+                  onClick={() => setFilterDropdown(!filterDropdown)}
+                  className="px-4 py-2 border border-stone-300 rounded-lg hover:bg-white flex items-center gap-2"
+                >
+                  <Filter size={18} />
+                  Filter
+                  <ChevronDown size={16} />
+                </button>
+                {filterDropdown && (
+                  <div className="absolute right-0 mt-2 w-64 bg-white border border-stone-200 rounded-lg shadow-lg p-4 z-10">
+                    <div className="mb-4">
+                      <p className="text-sm font-semibold text-stone-900 mb-2">Account Type</p>
+                      <label className="flex items-center gap-2 text-sm text-stone-600">
+                        <input 
+                          type="checkbox"
+                          checked={excludeBlueVerified}
+                          onChange={(e) => setExcludeBlueVerified(e.target.checked)}
+                          className="rounded"
+                        />
+                        Exclude Paid Twitter Accounts
+                      </label>
+                    </div>
+
+                    <div>
+                      <p className="text-sm font-semibold text-stone-900 mb-2">Influence Range</p>
+                      <div className="space-y-2">
+                        <label className="flex items-center gap-2 text-sm text-stone-600">
+                          <input 
+                            type="checkbox"
+                            checked={scoreRanges.high}
+                            onChange={(e) => setScoreRanges({...scoreRanges, high: e.target.checked})}
+                            className="rounded"
+                          />
+                          High (80-100%)
+                        </label>
+                        <label className="flex items-center gap-2 text-sm text-stone-600">
+                          <input 
+                            type="checkbox"
+                            checked={scoreRanges.medium}
+                            onChange={(e) => setScoreRanges({...scoreRanges, medium: e.target.checked})}
+                            className="rounded"
+                          />
+                          Medium (50-80%)
+                        </label>
+                        <label className="flex items-center gap-2 text-sm text-stone-600">
+                          <input 
+                            type="checkbox"
+                            checked={scoreRanges.low}
+                            onChange={(e) => setScoreRanges({...scoreRanges, low: e.target.checked})}
+                            className="rounded"
+                          />
+                          Low (0-50%)
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
-              <button className="px-4 py-2 border border-stone-300 rounded-lg hover:bg-white flex items-center gap-2">
-                <Filter size={18} />
-                Filter
-              </button>
-              <button className="px-4 py-2 bg-stone-900 text-white rounded-lg hover:bg-stone-800">
+
+              <button 
+                onClick={exportFullCalculation}
+                className="px-4 py-2 bg-stone-900 text-white rounded-lg hover:bg-stone-800 flex items-center gap-2"
+              >
+                <Download size={18} />
                 Export
               </button>
             </div>
           </div>
         </div>
 
-        {/* Network Canvas */}
         <div id="network-container" className="flex-1 bg-white relative">
           <svg
             ref={svgRef}
@@ -294,41 +426,49 @@ node.append('circle')
             height={dimensions.height}
             className="border border-stone-200"
           />
-          
-         {/* Legend */}
-      <div className="absolute bottom-4 left-4 bg-white border border-stone-200 rounded-lg p-4 shadow-lg">
-        <h3 className="text-sm font-semibold text-stone-900 mb-3">Legend</h3>
-        <div className="space-y-2">
-          <div className="flex items-center gap-2">
-            <div className="w-6 h-6 rounded-full" style={{ background: '#6366f1' }} />
-            <span className="text-xs text-stone-600">Central Keyword</span>
+
+          <div className="absolute bottom-4 left-4 bg-white border border-stone-200 rounded-lg p-4 shadow-lg">
+            <h3 className="text-sm font-semibold text-stone-900 mb-3">Legend</h3>
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <div className="w-6 h-6 rounded-full" style={{ background: '#6366f1' }} />
+                <span className="text-xs text-stone-600">Keyword Node</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-6 h-6 rounded-full" style={{ background: 'hsl(260, 60%, 35%)' }} />
+                <span className="text-xs text-stone-600">High Influence</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-6 h-6 rounded-full" style={{ background: 'hsl(260, 60%, 75%)' }} />
+                <span className="text-xs text-stone-600">Low Influence</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-full h-px bg-stone-300" />
+                <span className="text-xs text-stone-600 whitespace-nowrap">Keyword Link</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-full h-px bg-green-500" style={{ borderTop: '2px dashed' }} />
+                <span className="text-xs text-stone-600 whitespace-nowrap">Interaction</span>
+              </div>
+              <div className="text-xs text-stone-500 mt-2 pt-2 border-t border-stone-200">
+                Node size = Follower count
+              </div>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            <div className="w-6 h-6 rounded-full" style={{ background: 'hsl(260, 60%, 35%)' }} />
-            <span className="text-xs text-stone-600">High Influence</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="w-6 h-6 rounded-full" style={{ background: 'hsl(260, 60%, 75%)' }} />
-            <span className="text-xs text-stone-600">Low Influence</span>
-          </div>
-          <div className="text-xs text-stone-500 mt-2 pt-2 border-t border-stone-200">
-            Node size = Follower count
-          </div>
-        </div>
-      </div>
-          {/* Stats */}
+
           <div className="absolute top-4 left-4 bg-white border border-stone-200 rounded-lg p-4 shadow-lg">
             <div className="text-xs text-stone-600 mb-1">Total Nodes</div>
-            <div className="text-2xl font-semibold text-stone-900">{influencers.length + 1}</div>
+            <div className="text-2xl font-semibold text-stone-900">{filteredInfluencers.length + keywords.length}</div>
+            <div className="text-xs text-stone-500 mt-2">
+              {keywords.length} keywords • {filteredInfluencers.length} users
+            </div>
           </div>
         </div>
       </div>
 
-      {/* Profile Sidebar - Always visible */}
       <div className="w-96 bg-white border-l border-stone-200 overflow-y-auto">
         {selectedInfluencer ? (
           <div className="p-6">
-            {/* Header */}
             <div className="flex items-start justify-between mb-6">
               <h3 className="text-lg font-semibold text-stone-900">Influencer Profile</h3>
               <button
@@ -339,16 +479,22 @@ node.append('circle')
               </button>
             </div>
 
-            {/* Profile Picture */}
             <div className="w-32 h-32 mx-auto mb-4 border-2 border-stone-300 flex items-center justify-center">
               <div className="w-20 h-20 border border-stone-300" style={{ transform: 'rotate(45deg)' }} />
             </div>
 
-            {/* User Info */}
             <div className="text-center mb-6">
-              <h4 className="text-xl font-semibold text-stone-900 mb-1">
-                {selectedInfluencer.display_name}
-              </h4>
+              <div className="flex items-center justify-center gap-2 mb-1">
+                <h4 className="text-xl font-semibold text-stone-900">
+                  {selectedInfluencer.display_name}
+                </h4>
+                {selectedInfluencer.is_verified && (
+                  <span className="text-blue-500" title="Verified">✓</span>
+                )}
+                {selectedInfluencer.is_blue_verified && (
+                  <span className="text-amber-500" title="Twitter Blue">★</span>
+                )}
+              </div>
               <p className="text-stone-600">@{selectedInfluencer.user_id}</p>
               {selectedInfluencer.location && (
                 <p className="text-sm text-stone-500 mt-2">
@@ -357,7 +503,6 @@ node.append('circle')
               )}
             </div>
 
-            {/* Bio */}
             {selectedInfluencer.bio && (
               <div className="mb-6">
                 <h5 className="text-sm font-semibold text-stone-900 mb-2">Bio</h5>
@@ -367,7 +512,6 @@ node.append('circle')
               </div>
             )}
 
-            {/* Stats Grid */}
             <div className="grid grid-cols-2 gap-4 mb-6">
               <div className="bg-stone-50 p-4 rounded-lg">
                 <p className="text-xs text-stone-500 mb-1">Followers</p>
@@ -389,7 +533,6 @@ node.append('circle')
               </div>
             </div>
 
-            {/* Action Buttons */}
             <div className="space-y-2">
               <button className="w-full px-4 py-2 bg-stone-900 text-white rounded-lg hover:bg-stone-800">
                 View Details
