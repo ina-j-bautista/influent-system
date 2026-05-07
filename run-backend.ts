@@ -33,6 +33,7 @@ let lastAnalysisTime = 0;
 let lastEngagementTime = 0;
 let lastConvergenceTime = 0;
 let lastRelevancyTime = 0;
+let lastSentimentTime = 0;
 
 interface RankedInfluencer {
   user_id: string;
@@ -221,6 +222,39 @@ app.post('/api/analyze', async (req: express.Request, res: express.Response) => 
 
     console.log(`✅ Scrape complete: ${scrapeResult.users} users, ${scrapeResult.posts} posts`);
 
+    // ============ VADER SENTIMENT ANALYSIS ============
+    const vaderStartTime = Date.now();
+    console.log('💭 Running VADER sentiment analysis...');
+    
+    try {
+      const { stdout: vaderOutput, stderr: vaderError } = await execAsync('python run_vader_analysis.py', {
+        cwd: process.cwd(),
+        env: process.env,
+        timeout: 60000 // 60 second timeout
+      });
+      
+      console.log('--- VADER Output ---');
+      console.log(vaderOutput);
+      if (vaderError && vaderError.trim()) {
+        console.log('--- VADER Warnings ---');
+        console.log(vaderError);
+      }
+      console.log('--- End VADER Output ---');
+      
+      const vaderTime = Date.now() - vaderStartTime;
+      console.log(`⏱️  VADER analysis: ${vaderTime}ms\n`);
+      lastSentimentTime = vaderTime;
+      
+    } catch (error: any) {
+      console.error('❌ VADER analysis failed!');
+      console.error('Error code:', error.code);
+      console.error('Error message:', error.message);
+      if (error.stdout) console.error('stdout:', error.stdout);
+      if (error.stderr) console.error('stderr:', error.stderr);
+      console.log('   Continuing with neutral sentiment (0.5)...\n');
+      lastSentimentTime = 0;
+    }
+
     const users = await db.getAllUsers();
     console.log(`📊 Loaded ${users.length} users for analysis`);
 
@@ -334,9 +368,12 @@ app.post('/api/analyze', async (req: express.Request, res: express.Response) => 
 
     console.log('✅ Connection weights computed using W(v,u) formula\n');
 
-    const sentimentScores = new Map<string, number>();
-    for (const userId of userIds) {
-      sentimentScores.set(userId, 0.5);
+    // ============ SENTIMENT SCORES ============
+    console.log('💭 Loading sentiment scores from VADER pipeline...');
+    const sentimentScores = await sentimentAdapter.getBulkUserAverageSentiment(userIds);
+    
+    for (const [userId, sentiment] of sentimentScores) {
+      console.log(`   ${userId}: sentiment=${sentiment.toFixed(3)}`);
     }
 
     // ============ INFLUENT CONVERGENCE ============
@@ -362,7 +399,7 @@ app.post('/api/analyze', async (req: express.Request, res: express.Response) => 
       engagementScores,
       dampeningFactor,
       1e-6,
-      200,
+      500,
       customLogger as any
     );
 
@@ -423,6 +460,7 @@ app.post('/api/analyze', async (req: express.Request, res: express.Response) => 
       const engagement = engagementScores.get(user.user_id) || 0;
       const score = result.finalScores.get(user.user_id) || 0;
       const relevancy = relevancyScores.get(user.user_id) || 0;
+      const sentiment = sentimentScores.get(user.user_id) || 0.5;
 
       scoreCache.set(user.user_id, {
         engagement: engagement,
@@ -435,7 +473,7 @@ app.post('/api/analyze', async (req: express.Request, res: express.Response) => 
         followers: user.followers,
         engagement: engagement * 100,
         relevancy: relevancy * 100,
-        sentiment: 0.5,
+        sentiment: sentiment,
         influent_score: score * 100
       };
     });
@@ -451,7 +489,7 @@ app.post('/api/analyze', async (req: express.Request, res: express.Response) => 
 
     console.log(`✅ Analysis complete! Top score: ${rankings[0]?.influent_score.toFixed(2)}%`);
     console.log(`⏱️  Total time: ${elapsedMs}ms (${(elapsedMs/1000).toFixed(2)}s)`);
-    console.log(`   └─ Engagement: ${engagementTime}ms, Convergence: ${convergenceTime}ms, Relevancy: ${relevancyTime}ms`);
+    console.log(`   └─ VADER: ${lastSentimentTime}ms, Engagement: ${engagementTime}ms, Convergence: ${convergenceTime}ms, Relevancy: ${relevancyTime}ms`);
 
     // Store keywords for network view
     lastAnalysisKeywords = Array.isArray(keywords) ? keywords : keywords.split(',').map((k: string) => k.trim());
@@ -466,6 +504,7 @@ app.post('/api/analyze', async (req: express.Request, res: express.Response) => 
         scrapeTimestamp: new Date().toISOString(),
         elapsedTimeMs: elapsedMs,
         timings: {
+          vader: lastSentimentTime,
           engagement: engagementTime,
           convergence: convergenceTime,
           relevancy: relevancyTime,
@@ -565,7 +604,7 @@ app.get('/api/network-data', async (_req: express.Request, res: express.Response
       FROM twitter_interactions
       WHERE from_user IN (SELECT user_id FROM twitter_users LIMIT 50)
         AND to_user IN (SELECT user_id FROM twitter_users LIMIT 50)
-      LIMIT 200
+      LIMIT 500
     `);
 
     const keywords = lastAnalysisKeywords || ['AI'];
@@ -693,12 +732,18 @@ app.post('/api/export/full-calculation', async (req: express.Request, res: expre
       const avgReplies = postCount > 0 ? posts.reduce((sum: number, p: any) => sum + (p.reply_count || 0), 0) / postCount : 0;
       const avgRetweets = postCount > 0 ? posts.reduce((sum: number, p: any) => sum + (p.retweet_count || 0), 0) / postCount : 0;
       
-      const relevantPosts = posts.filter((p: any) => p.relevance_ratio !== null);
-      const avgRelevancy = relevantPosts.length > 0
-        ? relevantPosts.reduce((sum: number, p: any) => sum + (p.relevance_ratio || 0), 0) / relevantPosts.length
-        : 0;
+      // Calculate average relevancy
+      let avgRelevancy = 0;
+      if (postCount > 0) {
+        const sum = posts.reduce((acc: number, p: any) => {
+          const val = p.relevance_ratio;
+          return acc + (val !== null && !isNaN(val) ? Number(val) : 0);
+        }, 0);
+        avgRelevancy = sum / postCount;
+      }
 
-      const vaderCompound = 0.5;
+      // Get sentiment from SentimentAdapter
+      const vaderCompound = await sentimentAdapter.getUserAverageSentiment(user.user_id);
 
       csvRows.push([
         user.user_id,
@@ -743,6 +788,7 @@ app.post('/api/export/full-calculation', async (req: express.Request, res: expre
     csvRows.push('COMPUTATION TIME (Time Complexity Analysis)');
     csvRows.push('========================================');
     csvRows.push('Phase,Time (ms),Time (s)');
+    csvRows.push(`VADER Sentiment Analysis,${lastSentimentTime},${(lastSentimentTime/1000).toFixed(3)}`);
     csvRows.push(`Engagement Calculation,${lastEngagementTime},${(lastEngagementTime/1000).toFixed(3)}`);
     csvRows.push(`Convergence (INFLUENT Algorithm),${lastConvergenceTime},${(lastConvergenceTime/1000).toFixed(3)}`);
     csvRows.push(`Relevancy Calculation,${lastRelevancyTime},${(lastRelevancyTime/1000).toFixed(3)}`);
