@@ -6,6 +6,7 @@ interface Influencer {
   display_name: string;
   followers: number;
   engagement: number;
+  relevancy: number;
   influent_score: number;
   bio?: string;
   location?: string;
@@ -17,7 +18,7 @@ const InfluencersView: React.FC = () => {
   const [influencers, setInfluencers] = useState<Influencer[]>([]);
   const [selectedInfluencer, setSelectedInfluencer] = useState<Influencer | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
-  const [sortField, setSortField] = useState<'influent_score' | 'followers' | 'engagement'>('influent_score');
+  const [sortField, setSortField] = useState<'influent_score' | 'followers' | 'engagement' | 'relevancy'>('influent_score');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
   const [filterDropdown, setFilterDropdown] = useState(false);
   
@@ -45,7 +46,10 @@ const InfluencersView: React.FC = () => {
           inf.display_name && 
           inf.user_id.trim() !== '' &&
           inf.display_name.trim() !== ''
-        );
+        ).map(inf => ({
+          ...inf,
+          relevancy: inf.relevancy || 0  // Default to 0 if missing
+        }));
         setInfluencers(validInfluencers);
       } else {
         console.error('API returned non-array:', data);
@@ -57,7 +61,7 @@ const InfluencersView: React.FC = () => {
     }
   };
 
-  const handleSort = (field: 'influent_score' | 'followers' | 'engagement') => {
+  const handleSort = (field: 'influent_score' | 'followers' | 'engagement' | 'relevancy') => {
     if (sortField === field) {
       setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
     } else {
@@ -131,9 +135,9 @@ const InfluencersView: React.FC = () => {
       {/* Main Table */}
       <div className="flex-1 flex flex-col">
         {/* Header */}
-        <div className="bg-white border-b border-stone-200 p-6">
+        <div className="bg-white dark:bg-stone-900 border-b border-stone-200 dark:border-stone-800 p-6">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-2xl font-semibold text-stone-900">Influencer Database</h2>
+            <h2 className="text-2xl font-semibold text-stone-900 dark:text-stone-100">Influencer Database</h2>
             
             <div className="flex items-center gap-3">
               {/* Search */}
@@ -144,7 +148,7 @@ const InfluencersView: React.FC = () => {
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                   placeholder="Search influencers..."
-                  className="pl-10 pr-4 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-stone-900 w-64"
+                  className="pl-10 pr-4 py-2 border border-stone-300 dark:border-stone-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-stone-900 w-64 bg-white dark:bg-stone-800 text-stone-900 dark:text-stone-100"
                 />
               </div>
 
@@ -152,17 +156,17 @@ const InfluencersView: React.FC = () => {
               <div className="relative">
                 <button
                   onClick={() => setFilterDropdown(!filterDropdown)}
-                  className="px-4 py-2 border border-stone-300 rounded-lg hover:bg-stone-50 flex items-center gap-2"
+                  className="px-4 py-2 border border-stone-300 dark:border-stone-700 rounded-lg hover:bg-stone-50 dark:hover:bg-stone-800 bg-white dark:bg-stone-900 flex items-center gap-2 text-stone-900 dark:text-stone-100"
                 >
                   <Filter size={18} />
                   Filter
                   <ChevronDown size={16} />
                 </button>
                 {filterDropdown && (
-                  <div className="absolute right-0 mt-2 w-64 bg-white border border-stone-200 rounded-lg shadow-lg p-4 z-10">
+                  <div className="absolute right-0 mt-2 w-64 bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800 rounded-lg shadow-lg p-4 z-10">
                     <div className="mb-4">
-                      <p className="text-sm font-semibold text-stone-900 mb-2">Account Type</p>
-                      <label className="flex items-center gap-2 text-sm text-stone-600">
+                      <p className="text-sm font-semibold text-stone-900 dark:text-stone-100 mb-2">Account Type</p>
+                      <label className="flex items-center gap-2 text-sm text-stone-600 dark:text-stone-400">
                         <input 
                           type="checkbox"
                           checked={excludeBlueVerified}
@@ -174,9 +178,9 @@ const InfluencersView: React.FC = () => {
                     </div>
 
                     <div>
-                      <p className="text-sm font-semibold text-stone-900 mb-2">Influence Range</p>
+                      <p className="text-sm font-semibold text-stone-900 dark:text-stone-100 mb-2">Influence Range</p>
                       <div className="space-y-2">
-                        <label className="flex items-center gap-2 text-sm text-stone-600">
+                        <label className="flex items-center gap-2 text-sm text-stone-600 dark:text-stone-400">
                           <input 
                             type="checkbox"
                             checked={scoreRanges.high}
@@ -185,7 +189,7 @@ const InfluencersView: React.FC = () => {
                           />
                           High (80-100%)
                         </label>
-                        <label className="flex items-center gap-2 text-sm text-stone-600">
+                        <label className="flex items-center gap-2 text-sm text-stone-600 dark:text-stone-400">
                           <input 
                             type="checkbox"
                             checked={scoreRanges.medium}
@@ -194,7 +198,7 @@ const InfluencersView: React.FC = () => {
                           />
                           Medium (50-80%)
                         </label>
-                        <label className="flex items-center gap-2 text-sm text-stone-600">
+                        <label className="flex items-center gap-2 text-sm text-stone-600 dark:text-stone-400">
                           <input 
                             type="checkbox"
                             checked={scoreRanges.low}
@@ -211,7 +215,7 @@ const InfluencersView: React.FC = () => {
 
               <button 
                 onClick={exportFullCalculation}
-                className="px-4 py-2 bg-stone-900 text-white rounded-lg hover:bg-stone-800 flex items-center gap-2"
+                className="px-4 py-2 bg-stone-900 dark:bg-stone-100 text-white dark:text-stone-900 rounded-lg hover:bg-stone-800 dark:hover:bg-stone-200 flex items-center gap-2"
               >
                 <Download size={18} />
                 Export
@@ -223,18 +227,18 @@ const InfluencersView: React.FC = () => {
         {/* Table */}
         <div className="flex-1 overflow-auto">
           <table className="w-full">
-            <thead className="bg-stone-50 border-b border-stone-200 sticky top-0">
+            <thead className="bg-stone-50 dark:bg-stone-950 border-b border-stone-200 dark:border-stone-800 sticky top-0">
               <tr>
-                <th className="text-left px-6 py-4 text-sm font-semibold text-stone-700">
+                <th className="text-left px-6 py-4 text-sm font-semibold text-stone-700 dark:text-stone-300">
                   <div className="flex items-center gap-2">
                     Name
                   </div>
                 </th>
-                <th className="text-left px-6 py-4 text-sm font-semibold text-stone-700">
+                <th className="text-left px-6 py-4 text-sm font-semibold text-stone-700 dark:text-stone-300">
                   Handle
                 </th>
                 <th 
-                  className="text-left px-6 py-4 text-sm font-semibold text-stone-700 cursor-pointer hover:bg-stone-100"
+                  className="text-left px-6 py-4 text-sm font-semibold text-stone-700 dark:text-stone-300 cursor-pointer hover:bg-stone-100 dark:hover:bg-stone-800"
                   onClick={() => handleSort('followers')}
                 >
                   <div className="flex items-center gap-2">
@@ -243,7 +247,7 @@ const InfluencersView: React.FC = () => {
                   </div>
                 </th>
                 <th 
-                  className="text-left px-6 py-4 text-sm font-semibold text-stone-700 cursor-pointer hover:bg-stone-100"
+                  className="text-left px-6 py-4 text-sm font-semibold text-stone-700 dark:text-stone-300 cursor-pointer hover:bg-stone-100 dark:hover:bg-stone-800"
                   onClick={() => handleSort('engagement')}
                 >
                   <div className="flex items-center gap-2">
@@ -252,7 +256,16 @@ const InfluencersView: React.FC = () => {
                   </div>
                 </th>
                 <th 
-                  className="text-left px-6 py-4 text-sm font-semibold text-stone-700 cursor-pointer hover:bg-stone-100"
+                  className="text-left px-6 py-4 text-sm font-semibold text-stone-700 dark:text-stone-300 cursor-pointer hover:bg-stone-100 dark:hover:bg-stone-800"
+                  onClick={() => handleSort('relevancy')}
+                >
+                  <div className="flex items-center gap-2">
+                    Relevancy
+                    <SortIcon field="relevancy" />
+                  </div>
+                </th>
+                <th 
+                  className="text-left px-6 py-4 text-sm font-semibold text-stone-700 dark:text-stone-300 cursor-pointer hover:bg-stone-100 dark:hover:bg-stone-800"
                   onClick={() => handleSort('influent_score')}
                 >
                   <div className="flex items-center gap-2">
@@ -267,17 +280,17 @@ const InfluencersView: React.FC = () => {
                 <tr
                   key={influencer.user_id}
                   onClick={() => setSelectedInfluencer(influencer)}
-                  className={`border-b border-stone-100 hover:bg-stone-50 cursor-pointer ${
-                    selectedInfluencer?.user_id === influencer.user_id ? 'bg-stone-50' : ''
+                  className={`border-b border-stone-100 dark:border-stone-800 hover:bg-stone-50 dark:hover:bg-stone-800 cursor-pointer ${
+                    selectedInfluencer?.user_id === influencer.user_id ? 'bg-stone-50 dark:bg-stone-800' : 'bg-white dark:bg-stone-900'
                   }`}
                 >
                   <td className="px-6 py-4">
                     <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 border border-stone-300 flex items-center justify-center flex-shrink-0">
-                        <div className="w-6 h-6 border border-stone-300" style={{ transform: 'rotate(45deg)' }} />
+                      <div className="w-10 h-10 border border-stone-300 dark:border-stone-700 flex items-center justify-center flex-shrink-0">
+                        <div className="w-6 h-6 border border-stone-300 dark:border-stone-700" style={{ transform: 'rotate(45deg)' }} />
                       </div>
                       <div className="flex items-center gap-2">
-                        <span className="font-medium text-stone-900">{influencer.display_name}</span>
+                        <span className="font-medium text-stone-900 dark:text-stone-100">{influencer.display_name}</span>
                         {influencer.is_verified && (
                           <span className="text-blue-500" title="Verified">✓</span>
                         )}
@@ -287,20 +300,23 @@ const InfluencersView: React.FC = () => {
                       </div>
                     </div>
                   </td>
-                  <td className="px-6 py-4 text-stone-600">@{influencer.user_id}</td>
-                  <td className="px-6 py-4 text-stone-900">{influencer.followers.toLocaleString()}</td>
-                  <td className="px-6 py-4 text-stone-900">
+                  <td className="px-6 py-4 text-stone-600 dark:text-stone-400">@{influencer.user_id}</td>
+                  <td className="px-6 py-4 text-stone-900 dark:text-stone-100">{influencer.followers.toLocaleString()}</td>
+                  <td className="px-6 py-4 text-stone-900 dark:text-stone-100">
                     {influencer.engagement.toFixed(1)}%
+                  </td>
+                  <td className="px-6 py-4 text-stone-900 dark:text-stone-100">
+                    {influencer.relevancy.toFixed(1)}%
                   </td>
                   <td className="px-6 py-4">
                     <div className="flex items-center gap-3">
-                      <div className="flex-1 bg-stone-200 h-2 rounded-full overflow-hidden">
+                      <div className="flex-1 bg-stone-200 dark:bg-stone-700 h-2 rounded-full overflow-hidden">
                         <div 
-                          className="bg-stone-900 h-full rounded-full"
+                          className="bg-stone-900 dark:bg-stone-100 h-full rounded-full"
                           style={{ width: `${influencer.influent_score}%` }}
                         />
                       </div>
-                      <span className="text-sm font-mono text-stone-900 w-12">
+                      <span className="text-sm font-mono text-stone-900 dark:text-stone-100 w-12">
                         {influencer.influent_score.toFixed(1)}%
                       </span>
                     </div>
@@ -311,7 +327,7 @@ const InfluencersView: React.FC = () => {
           </table>
 
           {sortedInfluencers.length === 0 && (
-            <div className="text-center py-12 text-stone-500">
+            <div className="text-center py-12 text-stone-500 dark:text-stone-400">
               No influencers found
             </div>
           )}
@@ -320,30 +336,30 @@ const InfluencersView: React.FC = () => {
 
       {/* Profile Sidebar */}
       {selectedInfluencer && (
-        <div className="w-96 bg-white border-l border-stone-200 overflow-y-auto">
+        <div className="w-96 bg-white dark:bg-stone-900 border-l border-stone-200 dark:border-stone-800 overflow-y-auto">
           <div className="p-6">
             <div className="flex items-start justify-between mb-6">
-              <h3 className="text-lg font-semibold text-stone-900">Influencer Profile</h3>
+              <h3 className="text-lg font-semibold text-stone-900 dark:text-stone-100">Influencer Profile</h3>
               <div className="flex items-center gap-2">
-                <button className="text-stone-400 hover:text-stone-600">
+                <button className="text-stone-400 hover:text-stone-600 dark:hover:text-stone-300">
                   <Share2 size={18} />
                 </button>
                 <button
                   onClick={() => setSelectedInfluencer(null)}
-                  className="text-stone-400 hover:text-stone-600"
+                  className="text-stone-400 hover:text-stone-600 dark:hover:text-stone-300"
                 >
                   <X size={20} />
                 </button>
               </div>
             </div>
 
-            <div className="w-32 h-32 mx-auto mb-4 border-2 border-stone-300 flex items-center justify-center">
-              <div className="w-20 h-20 border border-stone-300" style={{ transform: 'rotate(45deg)' }} />
+            <div className="w-32 h-32 mx-auto mb-4 border-2 border-stone-300 dark:border-stone-700 flex items-center justify-center">
+              <div className="w-20 h-20 border border-stone-300 dark:border-stone-700" style={{ transform: 'rotate(45deg)' }} />
             </div>
 
             <div className="text-center mb-6">
               <div className="flex items-center justify-center gap-2 mb-1">
-                <h4 className="text-xl font-semibold text-stone-900">
+                <h4 className="text-xl font-semibold text-stone-900 dark:text-stone-100">
                   {selectedInfluencer.display_name}
                 </h4>
                 {selectedInfluencer.is_verified && (
@@ -353,9 +369,9 @@ const InfluencersView: React.FC = () => {
                   <span className="text-amber-500" title="Twitter Blue">★</span>
                 )}
               </div>
-              <p className="text-stone-600">@{selectedInfluencer.user_id}</p>
+              <p className="text-stone-600 dark:text-stone-400">@{selectedInfluencer.user_id}</p>
               {selectedInfluencer.location && (
-                <p className="text-sm text-stone-500 mt-2 flex items-center justify-center gap-1">
+                <p className="text-sm text-stone-500 dark:text-stone-400 mt-2 flex items-center justify-center gap-1">
                   <span>📍</span> {selectedInfluencer.location}
                 </p>
               )}
@@ -363,39 +379,45 @@ const InfluencersView: React.FC = () => {
 
             {selectedInfluencer.bio && (
               <div className="mb-6">
-                <h5 className="text-sm font-semibold text-stone-900 mb-2">Bio</h5>
-                <p className="text-sm text-stone-600 leading-relaxed">
+                <h5 className="text-sm font-semibold text-stone-900 dark:text-stone-100 mb-2">Bio</h5>
+                <p className="text-sm text-stone-600 dark:text-stone-400 leading-relaxed">
                   {selectedInfluencer.bio}
                 </p>
               </div>
             )}
 
             <div className="grid grid-cols-2 gap-4 mb-6">
-              <div className="bg-stone-50 p-4 rounded-lg">
-                <p className="text-xs text-stone-500 mb-1">Followers</p>
-                <p className="text-lg font-semibold text-stone-900">
+              <div className="bg-stone-50 dark:bg-stone-950 p-4 rounded-lg">
+                <p className="text-xs text-stone-500 dark:text-stone-400 mb-1">Followers</p>
+                <p className="text-lg font-semibold text-stone-900 dark:text-stone-100">
                   {selectedInfluencer.followers.toLocaleString()}
                 </p>
               </div>
-              <div className="bg-stone-50 p-4 rounded-lg">
-                <p className="text-xs text-stone-500 mb-1">Engagement</p>
-                <p className="text-lg font-semibold text-stone-900">
+              <div className="bg-stone-50 dark:bg-stone-950 p-4 rounded-lg">
+                <p className="text-xs text-stone-500 dark:text-stone-400 mb-1">Engagement</p>
+                <p className="text-lg font-semibold text-stone-900 dark:text-stone-100">
                   {selectedInfluencer.engagement.toFixed(1)}%
                 </p>
               </div>
-              <div className="col-span-2 bg-stone-50 p-4 rounded-lg">
-                <p className="text-xs text-stone-500 mb-1">Influence Score</p>
-                <p className="text-2xl font-semibold text-stone-900">
+              <div className="bg-stone-50 dark:bg-stone-950 p-4 rounded-lg">
+                <p className="text-xs text-stone-500 dark:text-stone-400 mb-1">Relevancy</p>
+                <p className="text-lg font-semibold text-stone-900 dark:text-stone-100">
+                  {selectedInfluencer.relevancy.toFixed(1)}%
+                </p>
+              </div>
+              <div className="bg-stone-50 dark:bg-stone-950 p-4 rounded-lg">
+                <p className="text-xs text-stone-500 dark:text-stone-400 mb-1">Influence Score</p>
+                <p className="text-lg font-semibold text-stone-900 dark:text-stone-100">
                   {selectedInfluencer.influent_score.toFixed(1)}%
                 </p>
               </div>
             </div>
 
             <div className="space-y-2">
-              <button className="w-full px-4 py-2 bg-stone-900 text-white rounded-lg hover:bg-stone-800">
+              <button className="w-full px-4 py-2 bg-stone-900 dark:bg-stone-100 text-white dark:text-stone-900 rounded-lg hover:bg-stone-800 dark:hover:bg-stone-200">
                 View in Network
               </button>
-              <button className="w-full px-4 py-2 border border-stone-300 rounded-lg hover:bg-stone-50">
+              <button className="w-full px-4 py-2 border border-stone-300 dark:border-stone-700 rounded-lg hover:bg-stone-50 dark:hover:bg-stone-800 text-stone-900 dark:text-stone-100">
                 Export Profile
               </button>
             </div>

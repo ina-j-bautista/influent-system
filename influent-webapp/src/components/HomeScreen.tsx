@@ -8,12 +8,14 @@ interface AnalysisResult {
     display_name: string;
     followers: number;
     engagement: number;
+    relevancy: number;
     influent_score: number;
   }>;
   metadata: {
     totalUsers: number;
     totalPosts: number;
     keywords: string[];
+    elapsedTimeMs?: number;
   };
 }
 
@@ -184,15 +186,37 @@ const HomeScreen: React.FC = () => {
                     className="w-full px-4 py-3 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 text-stone-900 dark:text-stone-100 rounded-lg focus:outline-none focus:ring-2 focus:ring-stone-900 dark:focus:ring-stone-100"
                   >
                     <option value="en">English</option>
-                    <option value="es">Spanish</option>
-                    <option value="fr">French</option>
-                    <option value="de">German</option>
-                    <option value="it">Italian</option>
-                    <option value="pt">Portuguese</option>
-                    <option value="ja">Japanese</option>
-                    <option value="ko">Korean</option>
-                    <option value="zh">Chinese</option>
+                    <option value="es">Spanish (Español)</option>
+                    <option value="fr">French (Français)</option>
+                    <option value="de">German (Deutsch)</option>
+                    <option value="it">Italian (Italiano)</option>
+                    <option value="pt">Portuguese (Português)</option>
+                    <option value="ja">Japanese (日本語)</option>
+                    <option value="ko">Korean (한국어)</option>
+                    <option value="zh">Chinese (中文)</option>
+                    <option value="ar">Arabic (العربية)</option>
+                    <option value="hi">Hindi (हिन्दी)</option>
+                    <option value="nl">Dutch (Nederlands)</option>
+                    <option value="ru">Russian (Русский)</option>
+                    <option value="tr">Turkish (Türkçe)</option>
+                    <option value="id">Indonesian (Bahasa Indonesia)</option>
+                    <option value="th">Thai (ไทย)</option>
+                    <option value="pl">Polish (Polski)</option>
+                    <option value="sv">Swedish (Svenska)</option>
+                    <option value="da">Danish (Dansk)</option>
+                    <option value="no">Norwegian (Norsk)</option>
+                    <option value="fi">Finnish (Suomi)</option>
+                    <option value="cs">Czech (Čeština)</option>
+                    <option value="hu">Hungarian (Magyar)</option>
+                    <option value="ro">Romanian (Română)</option>
+                    <option value="uk">Ukrainian (Українська)</option>
+                    <option value="vi">Vietnamese (Tiếng Việt)</option>
+                    <option value="he">Hebrew (עברית)</option>
+                    <option value="fa">Persian (فارسی)</option>
+                    <option value="ur">Urdu (اردو)</option>
+                    <option value="bn">Bengali (বাংলা)</option>
                     <option value="tl">Tagalog/Filipino</option>
+                    <option value="ms">Malay (Bahasa Melayu)</option>
                   </select>
                 </div>
 
@@ -494,9 +518,9 @@ const HomeScreen: React.FC = () => {
                   </p>
                 </div>
                 <div className="bg-stone-50 dark:bg-stone-800 border border-stone-200 dark:border-stone-700 rounded-lg p-4">
-                  <p className="text-sm text-stone-600 dark:text-stone-400 mb-1">Top Score</p>
+                  <p className="text-sm text-stone-600 dark:text-stone-400 mb-1">Time</p>
                   <p className="text-2xl font-semibold text-stone-900 dark:text-stone-100">
-                    {results.rankings[0]?.influent_score.toFixed(1)}%
+                    {results.metadata.elapsedTimeMs ? `${results.metadata.elapsedTimeMs}ms` : 'N/A'}
                   </p>
                 </div>
               </div>

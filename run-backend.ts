@@ -28,6 +28,12 @@ console.log('✅ Modules loaded successfully');
 
 const scoreCache = new Map<string, { engagement: number; influent_score: number }>();
 
+// Store last analysis timing
+let lastAnalysisTime = 0;
+let lastEngagementTime = 0;
+let lastConvergenceTime = 0;
+let lastRelevancyTime = 0;
+
 interface RankedInfluencer {
   user_id: string;
   display_name: string;
@@ -160,6 +166,11 @@ app.get('/api/stats', async (_req: express.Request, res: express.Response) => {
 });
 
 app.post('/api/analyze', async (req: express.Request, res: express.Response) => {
+  const overallStartTime = Date.now(); // Overall timer (for UI display)
+  let engagementTime = 0;
+  let relevancyTime = 0;
+  let convergenceTime = 0;
+  
   try {
     const {
       keywords,
@@ -213,6 +224,8 @@ app.post('/api/analyze', async (req: express.Request, res: express.Response) => 
     const users = await db.getAllUsers();
     console.log(`📊 Loaded ${users.length} users for analysis`);
 
+    // ============ ENGAGEMENT CALCULATION ============
+    const engagementStartTime = Date.now();
     console.log('🧮 Computing engagement scores with temporal decay...');
     const engagementScores = new Map<string, number>();
     const now = new Date();
@@ -267,7 +280,10 @@ app.post('/api/analyze', async (req: express.Request, res: express.Response) => 
       }
     }
     console.log('');
+    engagementTime = Date.now() - engagementStartTime;
+    console.log(`⏱️  Engagement calculation: ${engagementTime}ms`);
 
+    // ============ CONNECTION WEIGHTS ============
     const userIds = users.map((u: any) => u.user_id);
     const connectionWeights = new Map<string, Map<string, number>>();
     const userFollowers = new Map<string, number>();
@@ -323,6 +339,8 @@ app.post('/api/analyze', async (req: express.Request, res: express.Response) => 
       sentimentScores.set(userId, 0.5);
     }
 
+    // ============ INFLUENT CONVERGENCE ============
+    const convergenceStartTime = Date.now();
     console.log('🔄 Running INFLUENT algorithm...');
     const logger = new ConvergenceLogger();
     const { InfluentIterativeAlgorithm } = await import('./influent-iterative.js');
@@ -350,18 +368,61 @@ app.post('/api/analyze', async (req: express.Request, res: express.Response) => 
 
     // Store convergence data for export
     lastConvergenceData = iterationData;
+    convergenceTime = Date.now() - convergenceStartTime;
     console.log(`📊 Captured ${lastConvergenceData.length} convergence iterations`);
     if (lastConvergenceData.length > 0) {
       console.log(`   First: iter=${lastConvergenceData[0].iteration}, maxChange=${lastConvergenceData[0].maxChange}`);
       console.log(`   Last: iter=${lastConvergenceData[lastConvergenceData.length-1].iteration}, maxChange=${lastConvergenceData[lastConvergenceData.length-1].maxChange}`);
     }
+    console.log(`⏱️  Convergence calculation: ${convergenceTime}ms`);
 
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     logger.exportToCSV(`./convergence-${timestamp}.csv`);
 
+    // ============ RELEVANCY CALCULATION ============
+    const relevancyStartTime = Date.now();
+    console.log('📊 Calculating relevancy scores...');
+    const relevancyScores = new Map<string, number>();
+    
+    try {
+      for (const user of users) {
+        const posts = await db.executeQuery(`
+          SELECT relevance_ratio
+          FROM twitter_posts
+          WHERE user_id = $1
+        `, [user.user_id]);
+
+        if (posts.length > 0) {
+          const sum = posts.reduce((acc: number, p: any) => {
+            const val = p.relevance_ratio;
+            return acc + (val !== null && !isNaN(val) ? Number(val) : 0);
+          }, 0);
+          const avgRelevancy = sum / posts.length;
+          relevancyScores.set(user.user_id, avgRelevancy);
+          console.log(`   ${user.user_id}: ${posts.length} posts, avg=${(avgRelevancy * 100).toFixed(1)}%`);
+        } else {
+          relevancyScores.set(user.user_id, 0);
+          console.log(`   ${user.user_id}: no posts found`);
+        }
+      }
+    } catch (error: any) {
+      // If relevance_ratio column doesn't exist, default to 0
+      if (error.code === '42703') {
+        console.log('⚠️  relevance_ratio column not found, defaulting to 0');
+        for (const user of users) {
+          relevancyScores.set(user.user_id, 0);
+        }
+      } else {
+        throw error;
+      }
+    }
+    relevancyTime = Date.now() - relevancyStartTime;
+    console.log(`⏱️  Relevancy calculation: ${relevancyTime}ms`);
+
     const rankings = users.map((user: any) => {
       const engagement = engagementScores.get(user.user_id) || 0;
       const score = result.finalScores.get(user.user_id) || 0;
+      const relevancy = relevancyScores.get(user.user_id) || 0;
 
       scoreCache.set(user.user_id, {
         engagement: engagement,
@@ -373,6 +434,7 @@ app.post('/api/analyze', async (req: express.Request, res: express.Response) => 
         display_name: user.display_name,
         followers: user.followers,
         engagement: engagement * 100,
+        relevancy: relevancy * 100,
         sentiment: 0.5,
         influent_score: score * 100
       };
@@ -380,7 +442,16 @@ app.post('/api/analyze', async (req: express.Request, res: express.Response) => 
 
     rankings.sort((a, b) => b.influent_score - a.influent_score);
 
+    const endTime = Date.now();
+    const elapsedMs = endTime - overallStartTime;
+    lastAnalysisTime = elapsedMs;
+    lastEngagementTime = engagementTime;
+    lastConvergenceTime = convergenceTime;
+    lastRelevancyTime = relevancyTime;
+
     console.log(`✅ Analysis complete! Top score: ${rankings[0]?.influent_score.toFixed(2)}%`);
+    console.log(`⏱️  Total time: ${elapsedMs}ms (${(elapsedMs/1000).toFixed(2)}s)`);
+    console.log(`   └─ Engagement: ${engagementTime}ms, Convergence: ${convergenceTime}ms, Relevancy: ${relevancyTime}ms`);
 
     // Store keywords for network view
     lastAnalysisKeywords = Array.isArray(keywords) ? keywords : keywords.split(',').map((k: string) => k.trim());
@@ -393,6 +464,13 @@ app.post('/api/analyze', async (req: express.Request, res: express.Response) => 
         totalPosts: scrapeResult.posts,
         keywords: Array.isArray(keywords) ? keywords : keywords.split(','),
         scrapeTimestamp: new Date().toISOString(),
+        elapsedTimeMs: elapsedMs,
+        timings: {
+          engagement: engagementTime,
+          convergence: convergenceTime,
+          relevancy: relevancyTime,
+          total: elapsedMs
+        },
         parameters: {
           dampeningFactor,
           temporalDecay: lambda,
@@ -415,21 +493,36 @@ app.get('/api/influencers', async (_req: express.Request, res: express.Response)
       return res.json([]);
     }
 
-    const influencers = users.map((user: any) => {
+    const influencers = await Promise.all(users.map(async (user: any) => {
       const cached = scoreCache.get(user.user_id);
+
+      // Calculate relevancy score
+      const posts = await db.executeQuery(`
+        SELECT relevance_ratio
+        FROM twitter_posts
+        WHERE user_id = $1
+      `, [user.user_id]);
+
+      const relevancy = posts.length > 0
+        ? posts.reduce((sum: number, p: any) => {
+            const val = p.relevance_ratio;
+            return sum + (val !== null && !isNaN(val) ? Number(val) : 0);
+          }, 0) / posts.length
+        : 0;
 
       return {
         user_id: user.user_id,
         display_name: user.display_name,
         followers: user.followers,
         engagement: (cached?.engagement || 0) * 100,
+        relevancy: relevancy * 100,
         influent_score: (cached?.influent_score || 0) * 100,
         bio: user.bio,
         location: user.location,
         is_verified: user.is_verified,        
         is_blue_verified: user.is_blue_verified  
       };
-    });
+    }));
 
     influencers.sort((a, b) => b.influent_score - a.influent_score);
 
@@ -584,13 +677,13 @@ app.post('/api/export/full-calculation', async (req: express.Request, res: expre
       ? users.filter((u: any) => userIds.includes(u.user_id))
       : users;
 
-    const csvRows = ['User ID,Display Name,Followers,Engagement Score,Sentiment Score,Influence Score,VADER Compound,Post Count,Avg Likes,Avg Replies,Avg Retweets'];
+    const csvRows = ['User ID,Display Name,Followers,Engagement Score,Relevancy Score,Sentiment Score,Influence Score,VADER Compound,Post Count,Avg Likes,Avg Replies,Avg Retweets'];
 
     for (const user of filteredUsers) {
       const cached = scoreCache.get(user.user_id);
       
       const posts = await db.executeQuery(`
-        SELECT like_count, reply_count, retweet_count, content
+        SELECT like_count, reply_count, retweet_count, content, relevance_ratio
         FROM twitter_posts
         WHERE user_id = $1
       `, [user.user_id]);
@@ -599,6 +692,11 @@ app.post('/api/export/full-calculation', async (req: express.Request, res: expre
       const avgLikes = postCount > 0 ? posts.reduce((sum: number, p: any) => sum + (p.like_count || 0), 0) / postCount : 0;
       const avgReplies = postCount > 0 ? posts.reduce((sum: number, p: any) => sum + (p.reply_count || 0), 0) / postCount : 0;
       const avgRetweets = postCount > 0 ? posts.reduce((sum: number, p: any) => sum + (p.retweet_count || 0), 0) / postCount : 0;
+      
+      const relevantPosts = posts.filter((p: any) => p.relevance_ratio !== null);
+      const avgRelevancy = relevantPosts.length > 0
+        ? relevantPosts.reduce((sum: number, p: any) => sum + (p.relevance_ratio || 0), 0) / relevantPosts.length
+        : 0;
 
       const vaderCompound = 0.5;
 
@@ -607,6 +705,7 @@ app.post('/api/export/full-calculation', async (req: express.Request, res: expre
         `"${user.display_name}"`,
         user.followers,
         ((cached?.engagement || 0) * 100).toFixed(2),
+        (avgRelevancy * 100).toFixed(2),
         (vaderCompound * 100).toFixed(2),
         ((cached?.influent_score || 0) * 100).toFixed(2),
         vaderCompound.toFixed(3),
@@ -638,6 +737,16 @@ app.post('/api/export/full-calculation', async (req: express.Request, res: expre
     csvRows.push('FILTER SETTINGS');
     csvRows.push(`Exclude Paid Accounts: ${req.body.excludeBlueVerified ? 'Excluding Paid Accounts' : 'All Accounts'}`);
     csvRows.push(`Score Ranges: High=${req.body.scoreRanges?.high}, Medium=${req.body.scoreRanges?.medium}, Low=${req.body.scoreRanges?.low}`);
+    
+    csvRows.push('');
+    csvRows.push('========================================');
+    csvRows.push('COMPUTATION TIME (Time Complexity Analysis)');
+    csvRows.push('========================================');
+    csvRows.push('Phase,Time (ms),Time (s)');
+    csvRows.push(`Engagement Calculation,${lastEngagementTime},${(lastEngagementTime/1000).toFixed(3)}`);
+    csvRows.push(`Convergence (INFLUENT Algorithm),${lastConvergenceTime},${(lastConvergenceTime/1000).toFixed(3)}`);
+    csvRows.push(`Relevancy Calculation,${lastRelevancyTime},${(lastRelevancyTime/1000).toFixed(3)}`);
+    csvRows.push(`Total Analysis Time,${lastAnalysisTime},${(lastAnalysisTime/1000).toFixed(3)}`);
 
     const csvContent = csvRows.join('\n');
     
@@ -800,6 +909,7 @@ app.post('/api/export/complete', async (_req: express.Request, res: express.Resp
     csvRows.push(`Total Influencers,${totalInfluencers}`);
     csvRows.push(`Average Influence Score,${(avgInfluence * 100).toFixed(2)}%`);
     csvRows.push(`Total Topic Reach,${totalReach.toLocaleString()}`);
+    csvRows.push(`Analysis Time,${lastAnalysisTime}ms (${(lastAnalysisTime/1000).toFixed(2)}s)`);
     csvRows.push('');
 
     csvRows.push('Score Distribution');

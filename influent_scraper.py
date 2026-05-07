@@ -133,6 +133,8 @@ def main():
     # PHASE 2 — Deep Scrape Relevant Accounts
     # ============================================================
     
+    user_relevance_ratios = {}  # Initialize here for use in database section
+    
     if top_handles:
         print(f"[PHASE] PHASE 2: Deep scraping {len(top_handles)} accounts...")
         
@@ -151,6 +153,8 @@ def main():
             
             if "defaultDatasetId" in run_phase2:
                 all_phase2_items = []
+                author_post_counts = {}
+                author_keyword_hits = {}
                 current_scrape_time = datetime.now().isoformat()
                 
                 for item in client.dataset(run_phase2["defaultDatasetId"]).iterate_items():
@@ -158,6 +162,14 @@ def main():
                     author = item.get('author', {}).get('userName')
                     if not author:
                         continue
+                    
+                    # Count posts per author
+                    author_post_counts[author] = author_post_counts.get(author, 0) + 1
+                    
+                    # Check if post contains keywords
+                    post_text = item.get('fullText', '')
+                    if is_keyword_relevant(post_text, keywords):
+                        author_keyword_hits[author] = author_keyword_hits.get(author, 0) + 1
                     
                     from_user = author
                     post_id = item.get('id')
@@ -212,6 +224,17 @@ def main():
                                 'scraped_at': current_scrape_time
                             })
                 
+                # Calculate relevance ratios AFTER processing all items
+                user_relevance_ratios = {}
+                for author, total in author_post_counts.items():
+                    hits = author_keyword_hits.get(author, 0)
+                    ratio = (hits / total * 100) if total > 0 else 0
+                    user_relevance_ratios[author] = round(ratio, 1)
+                
+                print(f"[RELEVANCY] Calculated for {len(user_relevance_ratios)} users")
+                for author, ratio in user_relevance_ratios.items():
+                    print(f"  @{author}: {ratio}% ({author_keyword_hits.get(author, 0)}/{author_post_counts.get(author, 0)} posts)")
+                
                 print(f"[OK] Phase 2 complete: {len(all_phase2_items)} tweets scraped\\n")
         except Exception as e:
             print(json.dumps({"error": f"Phase 2 error: {str(e)}"}))
@@ -250,6 +273,10 @@ def main():
         author_username = post.get('author', {}).get('userName')
         if not author_username:
             continue
+        
+        # Get relevance ratio for this user (calculated in Phase 2)
+        relevance_ratio = user_relevance_ratios.get(author_username, 0) / 100  # Convert to decimal 0-1
+        
         formatted_posts.append({
             'post_id': post.get('id'),
             'user_id': author_username,  # Use username as user_id
@@ -258,6 +285,7 @@ def main():
             'like_count': post.get('likeCount', 0),
             'reply_count': post.get('replyCount', 0),
             'retweet_count': post.get('retweetCount', 0),
+            'relevance_ratio': relevance_ratio,
             'scraped_at': post.get('scraped_at')
         })
     
@@ -308,12 +336,12 @@ def main():
             execute_values(cursor, """
                 INSERT INTO twitter_posts (
                     post_id, user_id, content, created_at,
-                    like_count, reply_count, retweet_count, scraped_at
+                    like_count, reply_count, retweet_count, relevance_ratio, scraped_at
                 ) VALUES %s
                 ON CONFLICT (post_id) DO NOTHING
             """, [(
                 p['post_id'], p['user_id'], p['content'], p['created_at'],
-                p['like_count'], p['reply_count'], p['retweet_count'], p['scraped_at']
+                p['like_count'], p['reply_count'], p['retweet_count'], p['relevance_ratio'], p['scraped_at']
             ) for p in formatted_posts])
             print(f"[+] Inserted {len(formatted_posts)} posts")
         
