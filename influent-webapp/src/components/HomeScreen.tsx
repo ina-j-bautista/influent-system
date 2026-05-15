@@ -123,7 +123,6 @@ const HomeScreen: React.FC = () => {
         {/* Header with Logo */}
         <div className="mb-8 flex justify-center">
           <div className="flex items-center gap-6">
-            {/* INFLUENT Logos*/}
             <img 
               src="/src/public/INFLUENT_logo.png"
               alt="INFLUENT Logo" 
@@ -133,7 +132,6 @@ const HomeScreen: React.FC = () => {
                 e.currentTarget.style.display = 'none';
               }}
             />
-            {/* Dark mode logo (will use different image) */}
             <img 
               src="/src/public/INFLUENT_logo_dark.png"
               alt="INFLUENT Logo" 
@@ -155,7 +153,7 @@ const HomeScreen: React.FC = () => {
         {/* Main Content Card */}
         <div className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl rounded-2xl shadow-xl shadow-slate-200/50 dark:shadow-slate-900/50 border border-slate-200/50 dark:border-slate-800/50 p-8">
           
-          {/* Keywords Input*/}
+          {/* Keywords Input */}
           <div className="mb-8">
             <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-3">
               <Sparkles className="inline w-4 h-4 mr-2 text-purple-600 dark:text-purple-400" />
@@ -279,6 +277,28 @@ const HomeScreen: React.FC = () => {
                   onChange={(e) => setTweetsPerAccount(Number(e.target.value))}
                   className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 text-slate-900 dark:text-slate-100"
                 />
+              </div>
+
+              {/* ===== RESTORED: Time Window ===== */}
+              <div>
+                <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-2">
+                  <Calendar className="inline w-3 h-3 mr-1" />
+                  Time Window (Optional)
+                </label>
+                <div className="flex flex-col gap-2">
+                  <input
+                    type="date"
+                    value={startDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                    className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 text-slate-900 dark:text-slate-100"
+                  />
+                  <input
+                    type="date"
+                    value={endDate}
+                    onChange={(e) => setEndDate(e.target.value)}
+                    className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 text-slate-900 dark:text-slate-100"
+                  />
+                </div>
               </div>
 
               <div className="pt-3 border-t border-slate-200 dark:border-slate-700">
