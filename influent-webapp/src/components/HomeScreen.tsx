@@ -309,42 +309,72 @@ const HomeScreen: React.FC = () => {
             </div>
 
             {/* Algorithm Parameters Section */}
-            <div className="space-y-4 p-5 bg-gradient-to-br from-purple-50 to-purple-100/50 dark:from-purple-900/20 dark:to-purple-900/10 rounded-xl border border-purple-200/50 dark:border-purple-800/50">
-              <h3 className="text-sm font-semibold text-purple-700 dark:text-purple-400 uppercase tracking-wide flex items-center gap-2">
-                <TrendingUp className="w-4 h-4" />
-                Algorithm Parameters
-              </h3>
+<div className="space-y-4 p-5 bg-gradient-to-br from-purple-50 to-purple-100/50 dark:from-purple-900/20 dark:to-purple-900/10 rounded-xl border border-purple-200/50 dark:border-purple-800/50">
+  <h3 className="text-sm font-semibold text-purple-700 dark:text-purple-400 uppercase tracking-wide flex items-center gap-2">
+    <TrendingUp className="w-4 h-4" />
+    Algorithm Parameters
+  </h3>
 
-              <div>
-                <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-2">
-                  Dampening Factor: {sentimentImportance.toFixed(2)}
-                </label>
-                <input
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.01"
-                  value={sentimentImportance}
-                  onChange={(e) => setSentimentImportance(parseFloat(e.target.value))}
-                  className="w-full h-2 bg-purple-200 dark:bg-purple-900/50 rounded-lg appearance-none cursor-pointer accent-purple-600"
-                />
-              </div>
+  <div>
+    <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-2">
+      Sentiment Importance: {sentimentImportance.toFixed(2)}
+    </label>
+    <input
+      type="range"
+      min="0"
+      max="1"
+      step="0.01"
+      value={sentimentImportance}
+      onChange={(e) => setSentimentImportance(parseFloat(e.target.value))}
+      className="w-full h-2 bg-purple-200 dark:bg-purple-900/50 rounded-lg appearance-none cursor-pointer accent-purple-600"
+    />
+  </div>
 
-              <div>
-                <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-2">
-                  Temporal Decay (λ): {temporalDecay.toFixed(2)}
-                </label>
-                <input
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.01"
-                  value={temporalDecay}
-                  onChange={(e) => setTemporalDecay(parseFloat(e.target.value))}
-                  className="w-full h-2 bg-purple-200 dark:bg-purple-900/50 rounded-lg appearance-none cursor-pointer accent-purple-600"
-                />
-              </div>
-            </div>
+  <div>
+    <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-2">
+      Temporal Decay (λ): {temporalDecay.toFixed(2)}
+    </label>
+    <input
+      type="range"
+      min="0"
+      max="1"
+      step="0.01"
+      value={temporalDecay}
+      onChange={(e) => setTemporalDecay(parseFloat(e.target.value))}
+      className="w-full h-2 bg-purple-200 dark:bg-purple-900/50 rounded-lg appearance-none cursor-pointer accent-purple-600"
+    />
+  </div>
+
+  {/* Info Tips */}
+  <div className="pt-3 border-t border-purple-200 dark:border-purple-800 space-y-2">
+    {[
+      {
+        label: 'Sentiment Importance',
+        tip: 'Scales how heavily post sentiment (positive/negative tone) affects influence score propagation. Higher values reward positive engagement more strongly.'
+      },
+      {
+        label: 'λ — Temporal Decay',
+        tip: 'Determines how quickly older posts lose influence. Higher λ fades past activity faster, keeping rankings responsive to recent content.'
+      }
+    ].map(({ label, tip }) => (
+      <div
+        key={label}
+        className="group relative cursor-default"
+      >
+        <div className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
+          <span className="w-1.5 h-1.5 rounded-full bg-purple-400 dark:bg-purple-600 flex-shrink-0" />
+          <span className="font-medium text-purple-700 dark:text-purple-400">{label}</span>
+        </div>
+        <p className="mt-0.5 pl-3 text-xs text-slate-400 dark:text-slate-500 leading-relaxed
+          max-h-0 overflow-hidden opacity-0
+          group-hover:max-h-20 group-hover:opacity-100
+          transition-all duration-300 ease-in-out">
+          {tip}
+        </p>
+      </div>
+    ))}
+  </div>
+</div>
 
             {/* Engagement Weights Section */}
             <div className="space-y-4 p-5 bg-gradient-to-br from-indigo-50 to-indigo-100/50 dark:from-indigo-900/20 dark:to-indigo-900/10 rounded-xl border border-indigo-200/50 dark:border-indigo-800/50">
