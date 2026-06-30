@@ -63,7 +63,7 @@ export class PostgreSQLAdapter implements InfluentDataSource {
 
   async getUserById(userId: string): Promise<TwitterUser | null> {
     const query = `
-      SELECT 
+      SELECT
         user_id,
         display_name,
         bio,
@@ -76,7 +76,9 @@ export class PostgreSQLAdapter implements InfluentDataSource {
         favourites_count,
         is_verified,
         is_blue_verified,
-        scraped_at
+        scraped_at,
+        account_flag,
+        flag_reason
       FROM twitter_users
       WHERE user_id = $1
     `;
@@ -99,7 +101,7 @@ export class PostgreSQLAdapter implements InfluentDataSource {
     }
 
     const query = `
-      SELECT 
+      SELECT
         user_id,
         display_name,
         bio,
@@ -112,7 +114,9 @@ export class PostgreSQLAdapter implements InfluentDataSource {
         favourites_count,
         is_verified,
         is_blue_verified,
-        scraped_at
+        scraped_at,
+        account_flag,
+        flag_reason
       FROM twitter_users
       WHERE user_id = ANY($1)
     `;
@@ -128,7 +132,7 @@ export class PostgreSQLAdapter implements InfluentDataSource {
 
   async getAllUsers(limit: number = 100): Promise<TwitterUser[]> {
     const query = `
-      SELECT 
+      SELECT
         user_id,
         display_name,
         bio,
@@ -141,7 +145,9 @@ export class PostgreSQLAdapter implements InfluentDataSource {
         favourites_count,
         is_verified,
         is_blue_verified,
-        scraped_at
+        scraped_at,
+        account_flag,
+        flag_reason
       FROM twitter_users
       ORDER BY followers DESC
       LIMIT $1
@@ -417,7 +423,9 @@ export class PostgreSQLAdapter implements InfluentDataSource {
       favourites_count: row.favourites_count,
       is_verified: row.is_verified,
       is_blue_verified: row.is_blue_verified,
-      scraped_at: new Date(row.scraped_at)
+      scraped_at: new Date(row.scraped_at),
+      account_flag: row.account_flag || 'clean',
+      flag_reason: row.flag_reason || null
     };
   }
 
