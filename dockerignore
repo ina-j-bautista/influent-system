@@ -1,0 +1,7 @@
+node_modules
+.git
+.env
+*.csv
+dist
+build
+influent-webapp

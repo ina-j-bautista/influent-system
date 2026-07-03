@@ -10,7 +10,6 @@ import psycopg2
 from psycopg2.extras import execute_values
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
-# Database connections
 MAIN_DB_HOST = os.getenv('DB_HOST', 'ep-soft-sunset-a19fvgjt-pooler.ap-southeast-1.aws.neon.tech')
 MAIN_DB_NAME = os.getenv('DB_NAME', 'neondb')
 MAIN_DB_USER = os.getenv('DB_USER', 'neondb_owner')
@@ -31,7 +30,6 @@ def get_sentiment_label(compound):
         return 'neutral'
 
 def main():
-    # Connect to main database (twitter_posts)
     print('[VADER] Connecting to main database...')
     main_conn = psycopg2.connect(
         host=MAIN_DB_HOST,
@@ -41,7 +39,6 @@ def main():
         sslmode='require'
     )
     
-    # Connect to VADER database (sentiment_scores)
     print('[VADER] Connecting to sentiment database...')
     vader_conn = psycopg2.connect(
         host=VADER_DB_HOST,
@@ -54,11 +51,9 @@ def main():
     main_cur = main_conn.cursor()
     vader_cur = vader_conn.cursor()
     
-    # Initialize VADER
     print('[VADER] Initializing VADER analyzer...')
     analyzer = SentimentIntensityAnalyzer()
     
-    # Get all posts
     print('[VADER] Fetching posts from twitter_posts...')
     main_cur.execute("""
         SELECT post_id, user_id, content
@@ -73,7 +68,6 @@ def main():
         print('[VADER] No posts to analyze!')
         return
     
-    # Clear existing sentiment scores for these posts
     post_ids = [p[0] for p in posts]
     print('[VADER] Clearing old sentiment scores...')
     vader_cur.execute("""
@@ -82,16 +76,13 @@ def main():
     """, (post_ids,))
     vader_conn.commit()
     
-    # Analyze sentiment
     sentiment_data = []
     processed = 0
     
     for post_id, user_id, content in posts:
-        # Run VADER
         scores = analyzer.polarity_scores(content)
         compound = scores['compound']
         
-        # Normalize compound score (-1 to 1) to (0 to 1)
         normalized = (compound + 1) / 2
         
         sentiment_data.append((
@@ -112,7 +103,6 @@ def main():
         if processed % 10 == 0:
             print(f'[VADER] Processed {processed}/{len(posts)} posts...')
     
-    # Insert into sentiment_scores
     print(f'\n[VADER] Inserting {len(sentiment_data)} sentiment scores...')
     execute_values(vader_cur, """
         INSERT INTO sentiment_scores (
@@ -129,7 +119,6 @@ def main():
     
     vader_conn.commit()
     
-    # Show statistics
     vader_cur.execute("""
         SELECT 
             sentiment_label,
@@ -146,7 +135,6 @@ def main():
         print(f'{label.upper().ljust(10)} | {count:4d} posts | avg: {avg_compound:+.3f}')
     print('-' * 50)
     
-    # Close connections
     main_cur.close()
     main_conn.close()
     vader_cur.close()

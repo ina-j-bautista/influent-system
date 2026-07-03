@@ -23,7 +23,6 @@ def is_keyword_relevant(text, keywords):
     return False
 
 def main():
-    # Parse command-line arguments
     if len(sys.argv) < 2:
         print(json.dumps({"error": "Missing arguments"}))
         sys.exit(1)
@@ -34,7 +33,6 @@ def main():
         print(json.dumps({"error": "Invalid JSON input"}))
         sys.exit(1)
     
-    # Extract parameters
     keywords = params.get('keywords', [])
     min_followers = params.get('minFollowers', 0)
     min_avg_likes = params.get('minAvgLikes', 0)
@@ -45,11 +43,9 @@ def main():
     start_date = params.get('startDate', '')
     end_date = params.get('endDate', '')
     
-    # Get API tokens from environment
     API_TOKEN = os.getenv('APIFY_API_TOKEN')
     NEON_CONNECTION_STRING = os.getenv('NEON_CONNECTION_STRING')
     
-    # If NEON_CONNECTION_STRING not set, build it from parts
     if not NEON_CONNECTION_STRING:
         db_host = os.getenv('DB_HOST')
         db_name = os.getenv('DB_NAME')
@@ -108,14 +104,12 @@ def main():
                 
                 author_info['scraped_at'] = current_scrape_time
                 
-                # Add user if not already in list
                 if not any(u.get('userName') == username for u in twitter_data['users']):
                     twitter_data['users'].append(author_info)
                 
                 item['scraped_at'] = current_scrape_time
                 twitter_data['posts'].append(item)
                 
-                # Check if relevant for Phase 2
                 if is_keyword_relevant(item.get('fullText', ''), keywords):
                     if author_info.get('followers', 0) >= min_followers and item.get('likeCount', 0) >= min_avg_likes:
                         top_handles.add(username)
@@ -126,14 +120,14 @@ def main():
         print(json.dumps({"error": f"Phase 1 error: {str(e)}"}))
         sys.exit(1)
     
-    top_handles = list(top_handles)[:max_accounts]  # Limit to max_accounts
+    top_handles = list(top_handles)[:max_accounts]  
     print(f"[OK] Phase 1 complete: {len(top_handles)} relevant accounts found\\n")
     
     # ============================================================
     # PHASE 2 — Deep Scrape Relevant Accounts
     # ============================================================
     
-    user_relevance_ratios = {}  # Initialize here for use in database section
+    user_relevance_ratios = {} 
     
     if top_handles:
         print(f"[PHASE] PHASE 2: Deep scraping {len(top_handles)} accounts...")
@@ -163,10 +157,8 @@ def main():
                     if not author:
                         continue
                     
-                    # Count posts per author
                     author_post_counts[author] = author_post_counts.get(author, 0) + 1
                     
-                    # Check if post contains keywords
                     post_text = item.get('fullText', '')
                     if is_keyword_relevant(post_text, keywords):
                         author_keyword_hits[author] = author_keyword_hits.get(author, 0) + 1
@@ -177,12 +169,10 @@ def main():
                     if not from_user or not post_id:
                         continue
                     
-                    # Add post to twitter_data
                     item['scraped_at'] = current_scrape_time
                     if not any(p.get('id') == post_id for p in twitter_data['posts']):
                         twitter_data['posts'].append(item)
                     
-                    # Process interactions
                     # 1. Replies
                     if item.get('isReply') and item.get('inReplyToUsername'):
                         twitter_data['interactions'].append({
@@ -224,7 +214,6 @@ def main():
                                 'scraped_at': current_scrape_time
                             })
                 
-                # Calculate relevance ratios AFTER processing all items
                 user_relevance_ratios = {}
                 for author, total in author_post_counts.items():
                     hits = author_keyword_hits.get(author, 0)
@@ -246,14 +235,13 @@ def main():
     
     print("[DB] Writing to database...")
     
-    # Format data for database
     formatted_users = []
     for user in twitter_data['users']:
         username = user.get('userName')
         if not username:
             continue
         formatted_users.append({
-            'user_id': username,  # Use username as user_id (handle)
+            'user_id': username,  
             'display_name': user.get('name'),
             'is_verified': user.get('isVerified', False),
             'is_blue_verified': user.get('isBlueVerified', False),
@@ -274,12 +262,11 @@ def main():
         if not author_username:
             continue
         
-        # Get relevance ratio for this user (calculated in Phase 2)
-        relevance_ratio = user_relevance_ratios.get(author_username, 0) / 100  # Convert to decimal 0-1
+        relevance_ratio = user_relevance_ratios.get(author_username, 0) / 100  
         
         formatted_posts.append({
             'post_id': post.get('id'),
-            'user_id': author_username,  # Use username as user_id
+            'user_id': author_username,  
             'content': post.get('fullText', ''),
             'created_at': post.get('createdAt'),
             'like_count': post.get('likeCount', 0),
@@ -291,12 +278,10 @@ def main():
     
     formatted_interactions = twitter_data['interactions']
     
-    # Write to database
     conn = psycopg2.connect(NEON_CONNECTION_STRING)
     cursor = conn.cursor()
     
     try:
-        # 1. Insert twitter_users
         if formatted_users:
             execute_values(cursor, """
                 INSERT INTO twitter_users (
@@ -317,7 +302,6 @@ def main():
             ) for u in formatted_users])
             print(f"[+] Inserted {len(formatted_users)} users")
         
-        # 2. Insert stub users
         scraped_usernames = {u['user_id'] for u in formatted_users}
         stub_usernames = {
             i['to_user'] for i in formatted_interactions
@@ -331,7 +315,6 @@ def main():
             """, [(handle,) for handle in stub_usernames])
             print(f"[+] Inserted {len(stub_usernames)} stub users")
         
-        # 3. Insert twitter_posts
         if formatted_posts:
             execute_values(cursor, """
                 INSERT INTO twitter_posts (
@@ -345,7 +328,6 @@ def main():
             ) for p in formatted_posts])
             print(f"[+] Inserted {len(formatted_posts)} posts")
         
-        # 4. Insert twitter_interactions
         if formatted_interactions:
             execute_values(cursor, """
                 INSERT INTO twitter_interactions (
@@ -361,7 +343,6 @@ def main():
         conn.commit()
         print("[OK] All data committed successfully\\n")
         
-        # Output result
         result = {
             "success": True,
             "users": len(formatted_users),

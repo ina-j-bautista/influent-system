@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { Download, Calendar, BarChart3, X } from 'lucide-react';
+import { Download, Calendar, BarChart3, X, Sparkles, Loader2 } from 'lucide-react';
 
 interface TemporalData {
   date: string;
@@ -15,51 +15,73 @@ interface ScoreDistribution {
   count: number;
 }
 
-const chartInfo: Record<string, { title: string; lines: string[] }> = {
-  temporal: {
-    title: 'Temporal Trends',
-    lines: [
-      'Shows how many posts were collected per day across the analysis period.',
-      'A steady rise may indicate growing community activity around your keywords.',
-      'Sharp spikes often correspond to news events, product launches, or viral moments.',
-      'Flat or declining lines suggest the topic is losing traction or the time window is too narrow.',
-      'Use this to identify the most active periods before narrowing your date filter.',
-    ],
-  },
-  distribution: {
-    title: 'Influence Score Distribution',
-    lines: [
-      'Breaks down how many users fall into each INFLUENT score range.',
-      'A heavy left skew (most users in low ranges) is normal ; true influence is rare.',
-      'A wide spread across ranges suggests a healthy, diverse community.',
-      'If most users cluster in one narrow band, consider adjusting your keyword filters or minimum followers threshold.',
-      'The rightmost bars represent your top-tier influencers worth targeting.',
-    ],
-  },
-  engagement: {
-    title: 'Engagement Trends',
-    lines: [
-      'Tracks average likes, replies, and retweets per post over time.',
-      'High replies relative to likes may signal controversy or debate around your keywords.',
-      'High retweets with low replies suggest content is being amplified passively.',
-      'A divergence between likes and retweets can indicate viral but polarizing content.',
-      'Compare this chart with Temporal Trends ; spikes in posts don\'t always mean spikes in engagement.',
-    ],
-  },
+const chartTitles: Record<string, string> = {
+  temporal: 'Temporal Trends',
+  distribution: 'Influence Score Distribution',
+  engagement: 'Engagement Trends',
 };
 
-const InfoPopover: React.FC<{ chartKey: string }> = ({ chartKey }) => {
+// Sends the chart's actual data to the backend, which forwards it to Gemini
+// and returns a plain-language explanation of what the trend means.
+async function fetchAIExplanation(chartKey: string, data: any[]): Promise<string> {
+  const response = await fetch('http://localhost:3001/api/analyze-chart', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ chartType: chartKey, data }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Server responded with ${response.status}`);
+  }
+
+  const json = await response.json();
+  if (!json.explanation) {
+    throw new Error('No explanation returned');
+  }
+  return json.explanation as string;
+}
+
+const InfoPopover: React.FC<{ chartKey: string; data: any[] }> = ({ chartKey, data }) => {
   const [open, setOpen] = useState(false);
-  const info = chartInfo[chartKey];
+  const [loading, setLoading] = useState(false);
+  const [explanation, setExplanation] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const title = chartTitles[chartKey];
+
+  const handleOpen = async () => {
+    setOpen(true);
+
+    // Already fetched for this session, don't re-call the API
+    if (explanation || loading) return;
+
+    setLoading(true);
+    setError(null);
+    try {
+      const text = await fetchAIExplanation(chartKey, data);
+      setExplanation(text);
+    } catch (err) {
+      console.error('AI explanation failed:', err);
+      setError('Could not get an AI explanation right now. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRetry = () => {
+    setExplanation(null);
+    setError(null);
+    handleOpen();
+  };
 
   return (
     <div className="relative">
       <button
-        onClick={() => setOpen((v) => !v)}
-        className="w-6 h-6 rounded-full border-2 border-purple-300 dark:border-purple-700 text-purple-500 dark:text-purple-400 text-xs font-bold flex items-center justify-center hover:bg-purple-100 dark:hover:bg-purple-900/40 transition-colors"
-        aria-label={`Info about ${info.title}`}
+        onClick={handleOpen}
+        className="flex items-center gap-1.5 px-2.5 py-1 rounded-full border-2 border-purple-300 dark:border-purple-700 text-purple-600 dark:text-purple-400 text-xs font-medium hover:bg-purple-100 dark:hover:bg-purple-900/40 transition-colors"
+        aria-label={`Explain ${title} with AI`}
       >
-        ?
+        <Sparkles size={12} />
+        Explain
       </button>
 
       {open && (
@@ -67,21 +89,41 @@ const InfoPopover: React.FC<{ chartKey: string }> = ({ chartKey }) => {
           {/* backdrop */}
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
 
-          <div className="absolute left-0 top-8 z-50 w-80 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl p-4">
+          <div className="absolute left-0 top-9 z-50 w-96 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl p-4">
             <div className="flex items-center justify-between mb-3">
-              <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">{info.title}</p>
+              <div className="flex items-center gap-2">
+                <Sparkles size={14} className="text-purple-500 dark:text-purple-400" />
+                <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">{title} — AI Explanation</p>
+              </div>
               <button onClick={() => setOpen(false)} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
                 <X size={14} />
               </button>
             </div>
-            <ul className="space-y-2">
-              {info.lines.map((line, i) => (
-                <li key={i} className="flex gap-2 text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
-                  <span className="mt-1 w-1.5 h-1.5 rounded-full bg-purple-400 dark:bg-purple-500 flex-shrink-0" />
-                  {line}
-                </li>
-              ))}
-            </ul>
+
+            {loading && (
+              <div className="flex items-center gap-2 text-sm text-slate-500 dark:text-slate-400 py-4 justify-center">
+                <Loader2 size={16} className="animate-spin" />
+                Reading the chart...
+              </div>
+            )}
+
+            {!loading && error && (
+              <div className="text-sm text-slate-600 dark:text-slate-300">
+                <p className="mb-3">{error}</p>
+                <button
+                  onClick={handleRetry}
+                  className="text-xs font-medium text-purple-600 dark:text-purple-400 hover:underline"
+                >
+                  Try again
+                </button>
+              </div>
+            )}
+
+            {!loading && !error && explanation && (
+              <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed whitespace-pre-line">
+                {explanation}
+              </p>
+            )}
           </div>
         </>
       )}
@@ -190,7 +232,7 @@ const AnalyticsView: React.FC = () => {
             <div className="flex items-center justify-between mb-6">
               <div className="flex items-center gap-2">
                 <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Temporal Trends</h2>
-                <InfoPopover chartKey="temporal" />
+                <InfoPopover chartKey="temporal" data={temporalData} />
               </div>
               <button
                 onClick={() => exportToCSV(temporalData, 'temporal-trends.csv')}
@@ -220,7 +262,7 @@ const AnalyticsView: React.FC = () => {
             <div className="flex items-center justify-between mb-6">
               <div className="flex items-center gap-2">
                 <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Influence Score Distribution</h2>
-                <InfoPopover chartKey="distribution" />
+                <InfoPopover chartKey="distribution" data={scoreDistribution} />
               </div>
               <button
                 onClick={() => exportToCSV(scoreDistribution, 'score-distribution.csv')}
@@ -250,7 +292,7 @@ const AnalyticsView: React.FC = () => {
             <div className="flex items-center justify-between mb-6">
               <div className="flex items-center gap-2">
                 <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Engagement Trends</h2>
-                <InfoPopover chartKey="engagement" />
+                <InfoPopover chartKey="engagement" data={temporalData} />
               </div>
               <button
                 onClick={() => exportToCSV(temporalData, 'engagement-trends.csv')}

@@ -34,11 +34,7 @@ export interface InfluentScore {
 
 export class InfluentAlgorithm {
   
-  /**
-   * Compute engagement score E(v,u) with temporal decay
-   * Formula: E(v,u) = ws*min(S(v,u)/Smax) + wc*min(L(v,u)/Lmax) + wi*min(C(v,u)/Cmax)
-   * Then apply: E'(v,u) = E(v,u) * e^(-λΔt)
-   */
+
   static computeEngagementScore(
     post: TwitterPost,
     weights: WeightPreferences,
@@ -46,24 +42,20 @@ export class InfluentAlgorithm {
     currentDate: Date
   ): EngagementScore {
     
-    // Find max values for normalization (these would be computed across all posts)
-    // For demo purposes, using reasonable maximums
-    const S_max = 1000; // max shares/retweets
-    const L_max = 5000; // max likes
-    const C_max = 500;  // max comments/replies
+ 
+    const S_max = 1000;
+    const L_max = 5000; 
+    const C_max = 500;
 
-    // Normalize engagement metrics
     const s_normalized = Math.min(post.retweet_count / S_max, 1.0);
     const l_normalized = Math.min(post.like_count / L_max, 1.0);
     const c_normalized = Math.min(post.reply_count / C_max, 1.0);
 
-    // Compute weighted engagement score
     const raw_engagement = 
       weights.ws * s_normalized +
       weights.wi * l_normalized +
       weights.wc * c_normalized;
 
-    // Apply temporal decay: E'(v,u) = E(v,u) * e^(-λΔt)
     const delta_t_ms = currentDate.getTime() - post.created_at.getTime();
     const delta_t_days = delta_t_ms / (1000 * 60 * 60 * 24);
     
@@ -79,7 +71,6 @@ export class InfluentAlgorithm {
   }
 
   /**
-   * Compute connection weight W(v,u)
    * Formula: W(v,u) = 0.4*reciprocity + 0.4*frequency + 0.2*verified
    */
   static computeConnectionWeight(
@@ -91,21 +82,17 @@ export class InfluentAlgorithm {
     is_verified: boolean
   ): ConnectionScore {
     
-    // Reciprocity: min(a→b / b→a, 1.0)
     let reciprocity = 0;
     if (interactions_to_from > 0) {
       reciprocity = Math.min(interactions_from_to / interactions_to_from, 1.0);
     } else if (interactions_from_to > 0) {
-      reciprocity = 0; // One-way interaction
+      reciprocity = 0; 
     }
 
-    // Frequency normalized (assuming max 10 interactions per week)
     const frequency_normalized = Math.min(frequency_per_week / 10.0, 1.0);
 
-    // Verified bonus (1 if verified, 0 otherwise)
     const verified_bonus = is_verified ? 1.0 : 0.0;
 
-    // Connection weight formula
     const connection_weight = 
       0.4 * reciprocity +
       0.4 * frequency_normalized +
@@ -121,9 +108,7 @@ export class InfluentAlgorithm {
     };
   }
 
-  /**
-   * Build interaction graph and compute connection components
-   */
+
   static buildInteractionGraph(
     users: TwitterUser[],
     interactions: TwitterInteraction[],
@@ -132,7 +117,6 @@ export class InfluentAlgorithm {
     
     const connectionMap = new Map<string, ConnectionScore[]>();
     
-    // Calculate interaction frequencies
     const interactionCounts = new Map<string, { to: number; from: number }>();
     
     for (const interaction of interactions) {
@@ -153,7 +137,6 @@ export class InfluentAlgorithm {
       reverseCounts.from++;
     }
 
-    // Compute connection weights for each user pair
     const windowDurationWeeks = 
       (timeWindow.endDate.getTime() - timeWindow.startDate.getTime()) / 
       (1000 * 60 * 60 * 24 * 7);
@@ -196,9 +179,7 @@ export class InfluentAlgorithm {
   }
 
   /**
-   * Compute INFLUENT score for a user
    * Formula: INFLUENT(u) = ws*S + wc*C + wi*E
-   * (Note: ws, wc, wi here are the COMPONENT weights, different from engagement weights)
    */
   static computeInfluentScore(
     user_id: string,
@@ -222,9 +203,7 @@ export class InfluentAlgorithm {
     };
   }
 
-  /**
-   * Aggregate engagement scores for a user across all their posts
-   */
+
   static aggregateUserEngagement(
     user_id: string,
     engagementScores: EngagementScore[]
@@ -232,14 +211,11 @@ export class InfluentAlgorithm {
     const userScores = engagementScores.filter(e => e.user_id === user_id);
     if (userScores.length === 0) return 0;
 
-    // Average of temporal-adjusted engagement scores
     const sum = userScores.reduce((acc, score) => acc + score.temporal_adjusted, 0);
     return sum / userScores.length;
   }
 
-  /**
-   * Aggregate connection scores for a user
-   */
+
   static aggregateUserConnections(
     user_id: string,
     connectionMap: Map<string, ConnectionScore[]>
@@ -247,33 +223,25 @@ export class InfluentAlgorithm {
     const connections = connectionMap.get(user_id) || [];
     if (connections.length === 0) return 0;
 
-    // Average of connection weights
     const sum = connections.reduce((acc, conn) => acc + conn.connection_weight, 0);
     return sum / connections.length;
   }
 
-  /**
-   * Normalize scores to [0, 1] range using min-max normalization
-   */
+
   static normalizeScores(scores: number[]): number[] {
     if (scores.length === 0) return [];
     
     const min = Math.min(...scores);
     const max = Math.max(...scores);
     
-    if (max === min) return scores.map(() => 0.5); // All equal
+    if (max === min) return scores.map(() => 0.5); 
     
     return scores.map(s => (s - min) / (max - min));
   }
 
-  /**
-   * Demo sentiment component (placeholder until VADER integration)
-   * Returns a value between 0 and 1
-   */
   static demoSentimentComponent(user_id: string): number {
-    // For now, return a randomized value for demo purposes
-    // This will be replaced with actual VADER sentiment analysis
+
     const hash = user_id.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
-    return (Math.sin(hash) + 1) / 2; // Maps to [0, 1]
+    return (Math.sin(hash) + 1) / 2; 
   }
 }

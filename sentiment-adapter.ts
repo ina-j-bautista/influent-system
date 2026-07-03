@@ -21,7 +21,6 @@ export class SentimentAdapter {
   private pool: Pool;
 
   constructor() {
-    // WRITE branch where sentiment_scores table lives
     this.pool = new Pool({
       host: 'ep-solitary-bird-a1nai5q4-pooler.ap-southeast-1.aws.neon.tech',
       port: 5432,
@@ -34,9 +33,7 @@ export class SentimentAdapter {
     });
   }
 
-  /**
-   * Fetch all sentiment scores from the sentiment_scores table
-   */
+
   async getAllSentimentScores(): Promise<SentimentScore[]> {
     const query = `
       SELECT 
@@ -61,9 +58,7 @@ export class SentimentAdapter {
     return result.rows;
   }
 
-  /**
-   * Get sentiment scores for specific users
-   */
+
   async getSentimentByUsers(userIds: string[]): Promise<Map<string, SentimentScore[]>> {
     const query = `
       SELECT 
@@ -87,7 +82,6 @@ export class SentimentAdapter {
 
     const result = await this.pool.query(query, [userIds]);
     
-    // Group by user_id
     const sentimentMap = new Map<string, SentimentScore[]>();
     
     for (const row of result.rows) {
@@ -100,10 +94,6 @@ export class SentimentAdapter {
     return sentimentMap;
   }
 
-  /**
-   * Get average sentiment for a specific user
-   * Returns normalized sentiment averaged across all their posts
-   */
   async getUserAverageSentiment(userId: string): Promise<number> {
     const query = `
       SELECT AVG(normalized_sentiment) as avg_sentiment
@@ -115,15 +105,12 @@ export class SentimentAdapter {
     const result = await this.pool.query(query, [userId]);
     
     if (result.rows.length === 0 || result.rows[0].avg_sentiment === null) {
-      return 0.5; // Neutral default
+      return 0.5; 
     }
 
     return parseFloat(result.rows[0].avg_sentiment);
   }
 
-  /**
-   * Get average sentiment for multiple users in bulk
-   */
   async getBulkUserAverageSentiment(userIds: string[]): Promise<Map<string, number>> {
     const query = `
       SELECT 
@@ -140,12 +127,10 @@ export class SentimentAdapter {
     
     const sentimentMap = new Map<string, number>();
     
-    // Initialize all users with neutral default
     for (const userId of userIds) {
       sentimentMap.set(userId, 0.5);
     }
     
-    // Update with actual averages
     for (const row of result.rows) {
       sentimentMap.set(row.user_id, parseFloat(row.avg_sentiment));
     }
@@ -153,9 +138,7 @@ export class SentimentAdapter {
     return sentimentMap;
   }
 
-  /**
-   * Get sentiment statistics
-   */
+
   async getSentimentStatistics(): Promise<{
     total: number;
     positive: number;
@@ -186,9 +169,7 @@ export class SentimentAdapter {
     };
   }
 
-  /**
-   * Check if sentiment data exists for given posts
-   */
+
   async checkSentimentCoverage(postIds: string[]): Promise<{
     total: number;
     withSentiment: number;
@@ -210,9 +191,7 @@ export class SentimentAdapter {
     };
   }
 
-  /**
-   * Close the connection pool
-   */
+
   async close(): Promise<void> {
     await this.pool.end();
   }

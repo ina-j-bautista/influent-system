@@ -20,6 +20,7 @@ console.log('DB_HOST:', process.env.DB_HOST);
 console.log('DB_NAME:', process.env.DB_NAME);
 console.log('DB_USER:', process.env.DB_USER);
 console.log('DB_PASSWORD:', process.env.DB_PASSWORD ? '***' : 'NOT SET');
+console.log('GROQ_API_KEY:', process.env.GROQ_API_KEY ? `SET (${process.env.GROQ_API_KEY.slice(0, 8)}...)` : 'NOT SET');
 
 const db = createDatabaseConnection();
 const sentimentAdapter = new SentimentAdapter();
@@ -28,7 +29,6 @@ console.log('✅ Modules loaded successfully');
 
 const scoreCache = new Map<string, { engagement: number; influent_score: number }>();
 
-// Store last analysis timing
 let lastAnalysisTime = 0;
 let lastEngagementTime = 0;
 let lastConvergenceTime = 0;
@@ -44,10 +44,8 @@ interface RankedInfluencer {
   influent_score: number;
 }
 
-// Store keywords from last analysis
 let lastAnalysisKeywords: string[] = ['AI'];
 
-// Store convergence data from last analysis
 let lastConvergenceData: Array<{
   iteration: number;
   maxChange: number;
@@ -167,7 +165,7 @@ app.get('/api/stats', async (_req: express.Request, res: express.Response) => {
 });
 
 app.post('/api/analyze', async (req: express.Request, res: express.Response) => {
-  const overallStartTime = Date.now(); // Overall timer (for UI display)
+  const overallStartTime = Date.now(); 
   let engagementTime = 0;
   let relevancyTime = 0;
   let convergenceTime = 0;
@@ -230,7 +228,7 @@ app.post('/api/analyze', async (req: express.Request, res: express.Response) => 
       const { stdout: vaderOutput, stderr: vaderError } = await execAsync('python run_vader_analysis.py', {
         cwd: process.cwd(),
         env: process.env,
-        timeout: 60000 // 60 second timeout
+        timeout: 60000 
       });
       
       console.log('--- VADER Output ---');
@@ -382,7 +380,6 @@ app.post('/api/analyze', async (req: express.Request, res: express.Response) => 
     const logger = new ConvergenceLogger();
     const { InfluentIterativeAlgorithm } = await import('./influent-iterative.js');
 
-    // Store iterations manually with custom logger
     const iterationData: any[] = [];
     const customLogger = {
       logIteration: (iteration: number, maxChange: number, scores: Map<string, number>) => {
@@ -403,7 +400,6 @@ app.post('/api/analyze', async (req: express.Request, res: express.Response) => 
       customLogger as any
     );
 
-    // Store convergence data for export
     lastConvergenceData = iterationData;
     convergenceTime = Date.now() - convergenceStartTime;
     console.log(`📊 Captured ${lastConvergenceData.length} convergence iterations`);
@@ -443,7 +439,6 @@ app.post('/api/analyze', async (req: express.Request, res: express.Response) => 
         }
       }
     } catch (error: any) {
-      // If relevance_ratio column doesn't exist, default to 0
       if (error.code === '42703') {
         console.log('⚠️  relevance_ratio column not found, defaulting to 0');
         for (const user of users) {
@@ -491,7 +486,6 @@ app.post('/api/analyze', async (req: express.Request, res: express.Response) => 
     console.log(`⏱️  Total time: ${elapsedMs}ms (${(elapsedMs/1000).toFixed(2)}s)`);
     console.log(`   └─ VADER: ${lastSentimentTime}ms, Engagement: ${engagementTime}ms, Convergence: ${convergenceTime}ms, Relevancy: ${relevancyTime}ms`);
 
-    // Store keywords for network view
     lastAnalysisKeywords = Array.isArray(keywords) ? keywords : keywords.split(',').map((k: string) => k.trim());
 
     res.json({
@@ -535,7 +529,6 @@ app.get('/api/influencers', async (_req: express.Request, res: express.Response)
     const influencers = await Promise.all(users.map(async (user: any) => {
       const cached = scoreCache.get(user.user_id);
 
-      // Calculate relevancy score
       const posts = await db.executeQuery(`
         SELECT relevance_ratio
         FROM twitter_posts
@@ -732,7 +725,6 @@ app.post('/api/export/full-calculation', async (req: express.Request, res: expre
       const avgReplies = postCount > 0 ? posts.reduce((sum: number, p: any) => sum + (p.reply_count || 0), 0) / postCount : 0;
       const avgRetweets = postCount > 0 ? posts.reduce((sum: number, p: any) => sum + (p.retweet_count || 0), 0) / postCount : 0;
       
-      // Calculate average relevancy
       let avgRelevancy = 0;
       if (postCount > 0) {
         const sum = posts.reduce((acc: number, p: any) => {
@@ -742,7 +734,6 @@ app.post('/api/export/full-calculation', async (req: express.Request, res: expre
         avgRelevancy = sum / postCount;
       }
 
-      // Get sentiment from SentimentAdapter
       const vaderCompound = await sentimentAdapter.getUserAverageSentiment(user.user_id);
 
       csvRows.push([
@@ -1012,9 +1003,132 @@ app.post('/api/export/complete', async (_req: express.Request, res: express.Resp
   }
 });
 
+
+
+// ============================================================================
+// GROQ VERSION — replaces the Gemini-based analyze-chart route
+// ============================================================================
+//
+// 1. Get a free key: https://console.groq.com  → API Keys → Create
+//    (no credit card required)
+// 2. Add to your .env:
+//      GROQ_API_KEY=gsk_your_key_here
+// 3. Replace the old Gemini block in your backend file (from
+//    "interface AnalyzeChartRequest" down through the end of
+//    "registerAnalyzeChartRoute") with everything below.
+// 4. Keep the registerAnalyzeChartRoute(app); call before app.listen — no
+//    change needed there.
+// ============================================================================
+
+interface AnalyzeChartRequest {
+  chartType: 'temporal' | 'distribution' | 'engagement';
+  data: any[];
+}
+
+const CHART_CONTEXT: Record<string, string> = {
+  temporal:
+    'A line chart showing the number of posts collected per day over the analysis period. ' +
+    'Each data point has a "date" and a "post_count".',
+  distribution:
+    'A bar chart showing how many users fall into each INFLUENT score range (e.g. "0.0-0.2", "0.2-0.4", etc). ' +
+    'Each data point has a "range" and a "count".',
+  engagement:
+    'A line chart tracking average engagement per post over time: likes, replies, and retweets. ' +
+    'Each data point has a "date", "avg_likes", "avg_replies", and "avg_retweets".',
+};
+
+function summarizeForPrompt(chartType: string, data: any[]): any[] {
+  const MAX_POINTS = 60;
+  if (data.length <= MAX_POINTS) return data;
+
+  const step = Math.ceil(data.length / MAX_POINTS);
+  return data.filter((_, i) => i % step === 0);
+}
+
+function buildPrompt(chartType: string, data: any[]): string {
+  const context = CHART_CONTEXT[chartType] || 'A chart from an analytics dashboard.';
+  const trimmedData = summarizeForPrompt(chartType, data);
+
+  return `You are explaining a data visualization to someone viewing an influencer/social-media analytics dashboard called INFLUENT. They are not a data scientist, so avoid jargon.
+
+Chart type: ${chartType}
+What this chart shows: ${context}
+
+Here is the actual data behind the chart (JSON):
+${JSON.stringify(trimmedData)}
+
+Write a short explanation (4-6 sentences) that:
+1. Plainly describes what the person is looking at.
+2. Points out the specific trend or pattern visible in THIS data (reference real numbers/dates from the data above, not generic statements).
+3. Briefly notes what that trend might mean for understanding influence/engagement in this dataset.
+
+Do not use markdown formatting, headers, or bullet points. Write it as plain flowing sentences.`;
+}
+
+export function registerAnalyzeChartRoute(app: express.Express) {
+  app.post('/api/analyze-chart', async (req, res) => {
+    const { chartType, data } = req.body as AnalyzeChartRequest;
+
+    if (!chartType || !Array.isArray(data)) {
+      return res.status(400).json({ error: 'chartType and data are required' });
+    }
+
+    if (!process.env.GROQ_API_KEY) {
+      return res.status(500).json({ error: 'GROQ_API_KEY is not configured on the server' });
+    }
+
+    if (data.length === 0) {
+      return res.json({ explanation: 'There is no data available for this chart yet, so there is nothing to analyze.' });
+    }
+
+    try {
+      const prompt = buildPrompt(chartType, data);
+
+      const groqResponse = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: 'llama-3.3-70b-versatile',
+          messages: [{ role: 'user', content: prompt }],
+          temperature: 0.4,
+          max_completion_tokens: 300,
+        }),
+      });
+
+      if (!groqResponse.ok) {
+        const errText = await groqResponse.text();
+        console.error('Groq API error:', groqResponse.status, errText);
+        return res.status(502).json({ error: 'AI service returned an error' });
+      }
+
+      const json = await groqResponse.json();
+      const explanation = json?.choices?.[0]?.message?.content;
+
+      if (!explanation) {
+        return res.status(502).json({ error: 'AI service returned no explanation' });
+      }
+
+      res.json({ explanation: explanation.trim() });
+    } catch (error) {
+      console.error('Chart analysis failed:', error);
+      res.status(500).json({ error: 'Failed to analyze chart' });
+    }
+  });
+}
+
+
+
+
+
+
 // ============================================================================
 // START SERVER
 // ============================================================================
+
+registerAnalyzeChartRoute(app);
 
 app.listen(PORT, () => {
   console.log(`\n🚀 INFLUENT Backend Server running on http://localhost:${PORT}`);
