@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { Download, Calendar, BarChart3, X } from 'lucide-react';
+import ModelComparisonPanel from './ModelComparisonPanel';
 
 interface TemporalData {
   date: string;
@@ -290,6 +291,11 @@ const AnalyticsView: React.FC = () => {
               </LineChart>
             </ResponsiveContainer>
           </div>
+        </div>
+
+        {/* Model Comparison Benchmark */}
+        <div className="mb-6">
+          <ModelComparisonPanel />
         </div>
 
         {/* Stats Grid */}
