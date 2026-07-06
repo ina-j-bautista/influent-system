@@ -264,7 +264,7 @@ const NetworkView: React.FC = () => {
           if (inf) setSelectedInfluencer(inf);
         }
       })
-      .on('mouseover', function(event, d) {
+      .on('mouseover', function(_event, d) {
         if (d.type === 'influencer') {
           d3.select(this)
             .transition()

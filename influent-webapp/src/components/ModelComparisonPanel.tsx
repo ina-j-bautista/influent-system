@@ -23,7 +23,15 @@ const BENCHMARK = {
   ],
 };
 
-function AccuracyBar({ name, sublabel, accuracy, isCurrent, maxAccuracy }) {
+interface AccuracyBarProps {
+  name: string;
+  sublabel: string;
+  accuracy: number;
+  isCurrent: boolean;
+  maxAccuracy: number;
+}
+
+function AccuracyBar({ name, sublabel, accuracy, isCurrent, maxAccuracy }: AccuracyBarProps) {
   const widthPct = (accuracy / maxAccuracy) * 100;
   return (
     <div className="flex items-center gap-3 py-1.5">
