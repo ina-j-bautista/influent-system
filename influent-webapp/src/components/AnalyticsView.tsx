@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-<<<<<<< HEAD
 import { Download, Calendar, BarChart3, X, Sparkles, Loader2 } from 'lucide-react';
-=======
-import { Download, Calendar, BarChart3, X } from 'lucide-react';
 import ModelComparisonPanel from './ModelComparisonPanel';
->>>>>>> origin/add-model-comparison-panel
+
+// Base URL for the backend API.
+// Locally: falls back to localhost:3001 (your Express dev server).
+// In production: set VITE_API_URL in Vercel's Environment Variables to your Render backend URL,
+// e.g. https://influent-backend.onrender.com
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
 interface TemporalData {
   date: string;
@@ -29,7 +31,7 @@ const chartTitles: Record<string, string> = {
 // Sends the chart's actual data to the backend, which forwards it to Gemini
 // and returns a plain-language explanation of what the trend means.
 async function fetchAIExplanation(chartKey: string, data: any[]): Promise<string> {
-  const response = await fetch('http://localhost:3001/api/analyze-chart', {
+  const response = await fetch(`${API_BASE}/api/analyze-chart`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ chartType: chartKey, data }),
@@ -147,7 +149,7 @@ const AnalyticsView: React.FC = () => {
 
   const fetchAnalyticsData = async () => {
     try {
-      const response = await fetch('http://localhost:3001/api/analytics');
+      const response = await fetch(`${API_BASE}/api/analytics`);
       const data = await response.json();
       setTemporalData(data.temporalData || []);
       setScoreDistribution(data.scoreDistribution || []);
@@ -176,7 +178,7 @@ const AnalyticsView: React.FC = () => {
 
   const exportAllData = async () => {
     try {
-      const response = await fetch('http://localhost:3001/api/export/analytics', {
+      const response = await fetch(`${API_BASE}/api/export/analytics`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' }
       });

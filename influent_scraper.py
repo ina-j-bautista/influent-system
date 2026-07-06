@@ -278,8 +278,6 @@ def main():
     
     formatted_interactions = twitter_data['interactions']
     
-<<<<<<< HEAD
-=======
     # ============================================================
     # BOT / SPAM TAGGING
     # ============================================================
@@ -347,13 +345,10 @@ def main():
     print(f"[BOT] Tagging complete: {n_clean} clean, {n_suspected} suspected, {n_excluded} excluded\n")
 
     # Write to database
->>>>>>> origin/add-model-comparison-panel
     conn = psycopg2.connect(NEON_CONNECTION_STRING)
     cursor = conn.cursor()
 
     try:
-<<<<<<< HEAD
-=======
         # 0. Schema migration (idempotent)
         cursor.execute("""
             ALTER TABLE twitter_users
@@ -374,7 +369,6 @@ def main():
         conn.commit()
 
         # 1. Insert twitter_users
->>>>>>> origin/add-model-comparison-panel
         if formatted_users:
             execute_values(cursor, """
                 INSERT INTO twitter_users (
@@ -457,12 +451,8 @@ def main():
 
         conn.commit()
         print("[OK] All data committed successfully\\n")
-<<<<<<< HEAD
-        
-=======
 
         # Output result
->>>>>>> origin/add-model-comparison-panel
         result = {
             "success": True,
             "users": len(formatted_users),
