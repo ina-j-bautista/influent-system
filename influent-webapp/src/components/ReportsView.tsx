@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { TrendingUp, Users, MessageCircle, Target, FileText, Download, BarChart3 } from 'lucide-react';
+import { TrendingUp, Users, MessageCircle, Target, FileText, Download, BarChart3, ShieldAlert } from 'lucide-react';
 
 interface ReportStats {
   totalInfluencers: number;
@@ -13,6 +13,16 @@ interface KeywordData {
   frequency: number;
 }
 
+interface FlaggedAccount {
+  user_id: string;
+  display_name: string;
+  followers: number;
+  account_flag: string;
+  flag_reason: string | null;
+  first_flagged_at: string | null;
+  confirmations: number | null;
+}
+
 const ReportsView: React.FC = () => {
   const [stats, setStats] = useState<ReportStats>({
     totalInfluencers: 0,
@@ -21,11 +31,23 @@ const ReportsView: React.FC = () => {
     avgEngagement: 0
   });
   const [keywords, setKeywords] = useState<KeywordData[]>([]);
+  const [flaggedAccounts, setFlaggedAccounts] = useState<FlaggedAccount[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     fetchReportData();
+    fetchFlaggedAccounts();
   }, []);
+
+  const fetchFlaggedAccounts = async () => {
+    try {
+      const response = await fetch('http://localhost:3001/api/flagged-accounts');
+      const data = await response.json();
+      setFlaggedAccounts(Array.isArray(data) ? data : []);
+    } catch (error) {
+      console.error('Failed to fetch flagged accounts:', error);
+    }
+  };
 
   const fetchReportData = async () => {
     try {
@@ -204,6 +226,94 @@ const ReportsView: React.FC = () => {
             </div>
           )}
         </div>
+
+        {/* Bot & Spam Detection */}
+        {(() => {
+          const excluded = flaggedAccounts.filter(a => a.account_flag === 'excluded');
+          const suspected = flaggedAccounts.filter(a => a.account_flag === 'suspected');
+          const totalFlagged = excluded.length + suspected.length;
+          const totalIngested = stats.totalInfluencers + excluded.length;
+
+          return (
+            <div className="bg-white dark:bg-slate-900 border-2 border-slate-200 dark:border-slate-800 rounded-xl p-6 mb-8">
+              <div className="flex items-center gap-3 mb-6">
+                <ShieldAlert className="w-5 h-5 text-orange-500 dark:text-orange-400" />
+                <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100">
+                  Bot &amp; Spam Detection
+                </h2>
+              </div>
+
+              {/* Summary chips */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                <div className="bg-slate-50 dark:bg-slate-800 rounded-lg p-4 text-center">
+                  <p className="text-2xl font-bold text-slate-900 dark:text-slate-100">{totalIngested}</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Accounts Ingested</p>
+                </div>
+                <div className="bg-green-50 dark:bg-green-900/20 rounded-lg p-4 text-center">
+                  <p className="text-2xl font-bold text-green-700 dark:text-green-400">{totalIngested - totalFlagged}</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Clean</p>
+                </div>
+                <div className="bg-yellow-50 dark:bg-yellow-900/20 rounded-lg p-4 text-center">
+                  <p className="text-2xl font-bold text-yellow-700 dark:text-yellow-400">{suspected.length}</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Suspected</p>
+                </div>
+                <div className="bg-red-50 dark:bg-red-900/20 rounded-lg p-4 text-center">
+                  <p className="text-2xl font-bold text-red-700 dark:text-red-400">{excluded.length}</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Excluded</p>
+                </div>
+              </div>
+
+              {/* Flagged accounts table */}
+              {flaggedAccounts.length > 0 ? (
+                <div className="overflow-auto max-h-64 rounded-lg border border-slate-200 dark:border-slate-700">
+                  <table className="w-full text-sm">
+                    <thead className="bg-slate-50 dark:bg-slate-800 sticky top-0">
+                      <tr>
+                        <th className="text-left px-4 py-3 text-slate-600 dark:text-slate-400 font-semibold">User ID</th>
+                        <th className="text-left px-4 py-3 text-slate-600 dark:text-slate-400 font-semibold">Display Name</th>
+                        <th className="text-right px-4 py-3 text-slate-600 dark:text-slate-400 font-semibold">Followers</th>
+                        <th className="text-left px-4 py-3 text-slate-600 dark:text-slate-400 font-semibold">Tag</th>
+                        <th className="text-left px-4 py-3 text-slate-600 dark:text-slate-400 font-semibold">Reason</th>
+                        <th className="text-right px-4 py-3 text-slate-600 dark:text-slate-400 font-semibold">Confirmations</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                      {flaggedAccounts.map((account) => (
+                        <tr key={account.user_id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
+                          <td className="px-4 py-3 font-mono text-slate-700 dark:text-slate-300">@{account.user_id}</td>
+                          <td className="px-4 py-3 text-slate-700 dark:text-slate-300">{account.display_name || '—'}</td>
+                          <td className="px-4 py-3 text-right text-slate-600 dark:text-slate-400">{(account.followers || 0).toLocaleString()}</td>
+                          <td className="px-4 py-3">
+                            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                              account.account_flag === 'excluded'
+                                ? 'bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300'
+                                : 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-300'
+                            }`}>
+                              {account.account_flag}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-slate-500 dark:text-slate-400 font-mono text-xs">{account.flag_reason || '—'}</td>
+                          <td className="px-4 py-3 text-right text-slate-600 dark:text-slate-400">{account.confirmations ?? 1}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="text-center py-6 text-slate-400 dark:text-slate-500 text-sm">
+                  No flagged accounts — run an analysis to populate this table.
+                </div>
+              )}
+
+              {/* Note */}
+              <p className="mt-4 text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+                Excluded accounts were removed from the interaction graph before scoring so they cannot inflate PageRank values.
+                Suspected accounts are retained but flagged for review. Accounts flagged across multiple runs accumulate
+                confirmation counts, raising confidence in their exclusion.
+              </p>
+            </div>
+          );
+        })()}
 
         {/* Export Section */}
         <div className="bg-gradient-to-br from-purple-50 to-purple-100/50 dark:from-purple-900/20 dark:to-purple-900/10 border-2 border-purple-200 dark:border-purple-800 rounded-xl p-8">

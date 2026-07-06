@@ -253,8 +253,12 @@ app.post('/api/analyze', async (req: express.Request, res: express.Response) => 
       lastSentimentTime = 0;
     }
 
-    const users = await db.getAllUsers();
-    console.log(`📊 Loaded ${users.length} users for analysis`);
+    const allUsers = await db.getAllUsers();
+    const users = allUsers.filter((u: any) => (u.account_flag || 'clean') !== 'excluded');
+    const excludedUsers = allUsers.filter((u: any) => u.account_flag === 'excluded');
+    const suspectedUsers = allUsers.filter((u: any) => u.account_flag === 'suspected');
+    console.log(`📊 Loaded ${allUsers.length} users total`);
+    console.log(`🚫 Bot filter: ${excludedUsers.length} excluded, ${suspectedUsers.length} suspected, ${users.length} active`);
 
     // ============ ENGAGEMENT CALCULATION ============
     const engagementStartTime = Date.now();
@@ -508,6 +512,17 @@ app.post('/api/analyze', async (req: express.Request, res: express.Response) => 
           dampeningFactor,
           temporalDecay: lambda,
           weights: { likes: wi, comments: wc, shares: ws }
+        },
+        botTagging: {
+          totalIngested: allUsers.length,
+          clean: allUsers.filter((u: any) => (u.account_flag || 'clean') === 'clean').length,
+          suspected: suspectedUsers.length,
+          excluded: excludedUsers.length,
+          excludedAccounts: excludedUsers.map((u: any) => ({
+            user_id: u.user_id,
+            display_name: u.display_name,
+            flag_reason: u.flag_reason
+          }))
         }
       }
     });
@@ -692,6 +707,33 @@ app.get('/api/reports/keywords', async (_req: express.Request, res: express.Resp
     res.json(keywords || []);
   } catch (error: any) {
     console.error('Keywords error:', error);
+    res.json([]);
+  }
+});
+
+// ============================================================================
+// BOT / SPAM TAGGING ENDPOINT
+// ============================================================================
+
+app.get('/api/flagged-accounts', async (_req: express.Request, res: express.Response) => {
+  try {
+    const rows = await db.executeQuery(`
+      SELECT
+        u.user_id,
+        u.display_name,
+        u.followers,
+        u.account_flag,
+        u.flag_reason,
+        f.first_flagged_at,
+        f.confirmations
+      FROM twitter_users u
+      LEFT JOIN flagged_accounts f USING (user_id)
+      WHERE u.account_flag IN ('suspected', 'excluded')
+      ORDER BY u.account_flag DESC, f.confirmations DESC NULLS LAST
+    `);
+    res.json(rows || []);
+  } catch (error: any) {
+    console.error('Flagged accounts error:', error);
     res.json([]);
   }
 });
