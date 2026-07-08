@@ -58,11 +58,11 @@ const ReportsView: React.FC = () => {
       const keywordsData = await keywordsResponse.json();
 
       setStats({
-        totalInfluencers: parseInt(statsData.users) || 0,
-        avgInfluenceScore: 80.3,
-        totalTopicReach: 3300000,
-        avgEngagement: 4.5
-      });
+      totalInfluencers: parseInt(statsData.users) || 0,
+      avgInfluenceScore: statsData.avgInfluenceScore || 0,
+      totalTopicReach: statsData.totalTopicReach || 0,
+      avgEngagement: statsData.avgEngagement || 0
+    });
 
       setKeywords(keywordsData.slice(0, 10));
       setLoading(false);

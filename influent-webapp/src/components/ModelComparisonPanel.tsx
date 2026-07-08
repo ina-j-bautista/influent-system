@@ -23,6 +23,7 @@ const BENCHMARK = {
   ],
 };
 
+
 interface AccuracyBarProps {
   name: string;
   sublabel: string;

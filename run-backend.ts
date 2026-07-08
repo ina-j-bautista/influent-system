@@ -10,12 +10,33 @@ import { ConvergenceLogger } from './export-convergence.js';
 const execAsync = promisify(exec);
 
 const app = express();
-const PORT = 3001;
 
-app.use(cors());
+
+const PORT = process.env.PORT || 3001;
+
+
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || 'http://localhost:5173,http://localhost:3000')
+  .split(',')
+  .map((o) => o.trim())
+  .filter(Boolean);
+
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    console.warn(`⚠️  Blocked CORS request from unrecognized origin: ${origin}`);
+    return callback(new Error(`Not allowed by CORS: ${origin}`));
+  },
+  methods: ['GET', 'POST'],
+  allowedHeaders: ['Content-Type'],
+}));
+
 app.use(express.json());
 
 console.log('🔍 Environment check:');
+console.log('NODE_ENV:', process.env.NODE_ENV || 'not set');
+console.log('PORT:', PORT);
+console.log('ALLOWED_ORIGINS:', allowedOrigins.join(', '));
 console.log('DB_HOST:', process.env.DB_HOST);
 console.log('DB_NAME:', process.env.DB_NAME);
 console.log('DB_USER:', process.env.DB_USER);
@@ -149,6 +170,11 @@ async function runCompleteScrape(params: {
 // API ENDPOINTS
 // ============================================================================
 
+
+app.get('/', (_req: express.Request, res: express.Response) => {
+  res.json({ status: 'ok', service: 'INFLUENT backend', timestamp: new Date().toISOString() });
+});
+
 app.get('/api/stats', async (_req: express.Request, res: express.Response) => {
   try {
     const stats = await db.executeQuery(`
@@ -157,10 +183,29 @@ app.get('/api/stats', async (_req: express.Request, res: express.Response) => {
         (SELECT COUNT(*) FROM twitter_posts) as posts,
         (SELECT COUNT(*) FROM twitter_interactions) as interactions
     `);
-    res.json(stats[0] || { users: 0, posts: 0, interactions: 0 });
+
+    const users = await db.getAllUsers();
+    const totalUsers = users.length;
+
+    const avgInfluenceScore = totalUsers > 0
+      ? (users.reduce((sum: number, u: any) => sum + (scoreCache.get(u.user_id)?.influent_score || 0), 0) / totalUsers) * 100
+      : 0;
+
+    const avgEngagement = totalUsers > 0
+      ? (users.reduce((sum: number, u: any) => sum + (scoreCache.get(u.user_id)?.engagement || 0), 0) / totalUsers) * 100
+      : 0;
+
+    const totalTopicReach = users.reduce((sum: number, u: any) => sum + (u.followers || 0), 0);
+
+    res.json({
+      ...(stats[0] || { users: 0, posts: 0, interactions: 0 }),
+      avgInfluenceScore,
+      avgEngagement,
+      totalTopicReach
+    });
   } catch (error: any) {
     console.error('Stats error:', error);
-    res.json({ users: 0, posts: 0, interactions: 0 });
+    res.json({ users: 0, posts: 0, interactions: 0, avgInfluenceScore: 0, avgEngagement: 0, totalTopicReach: 0 });
   }
 });
 
@@ -253,12 +298,8 @@ app.post('/api/analyze', async (req: express.Request, res: express.Response) => 
       lastSentimentTime = 0;
     }
 
-    const allUsers = await db.getAllUsers();
-    const users = allUsers.filter((u: any) => (u.account_flag || 'clean') !== 'excluded');
-    const excludedUsers = allUsers.filter((u: any) => u.account_flag === 'excluded');
-    const suspectedUsers = allUsers.filter((u: any) => u.account_flag === 'suspected');
-    console.log(`📊 Loaded ${allUsers.length} users total`);
-    console.log(`🚫 Bot filter: ${excludedUsers.length} excluded, ${suspectedUsers.length} suspected, ${users.length} active`);
+    const users = await db.getAllUsers();
+    console.log(`📊 Loaded ${users.length} users for analysis`);
 
     // ============ ENGAGEMENT CALCULATION ============
     const engagementStartTime = Date.now();
@@ -512,17 +553,6 @@ app.post('/api/analyze', async (req: express.Request, res: express.Response) => 
           dampeningFactor,
           temporalDecay: lambda,
           weights: { likes: wi, comments: wc, shares: ws }
-        },
-        botTagging: {
-          totalIngested: allUsers.length,
-          clean: allUsers.filter((u: any) => (u.account_flag || 'clean') === 'clean').length,
-          suspected: suspectedUsers.length,
-          excluded: excludedUsers.length,
-          excludedAccounts: excludedUsers.map((u: any) => ({
-            user_id: u.user_id,
-            display_name: u.display_name,
-            flag_reason: u.flag_reason
-          }))
         }
       }
     });
@@ -707,33 +737,6 @@ app.get('/api/reports/keywords', async (_req: express.Request, res: express.Resp
     res.json(keywords || []);
   } catch (error: any) {
     console.error('Keywords error:', error);
-    res.json([]);
-  }
-});
-
-// ============================================================================
-// BOT / SPAM TAGGING ENDPOINT
-// ============================================================================
-
-app.get('/api/flagged-accounts', async (_req: express.Request, res: express.Response) => {
-  try {
-    const rows = await db.executeQuery(`
-      SELECT
-        u.user_id,
-        u.display_name,
-        u.followers,
-        u.account_flag,
-        u.flag_reason,
-        f.first_flagged_at,
-        f.confirmations
-      FROM twitter_users u
-      LEFT JOIN flagged_accounts f USING (user_id)
-      WHERE u.account_flag IN ('suspected', 'excluded')
-      ORDER BY u.account_flag DESC, f.confirmations DESC NULLS LAST
-    `);
-    res.json(rows || []);
-  } catch (error: any) {
-    console.error('Flagged accounts error:', error);
     res.json([]);
   }
 });
@@ -1048,18 +1051,7 @@ app.post('/api/export/complete', async (_req: express.Request, res: express.Resp
 
 
 // ============================================================================
-// GROQ VERSION — replaces the Gemini-based analyze-chart route
-// ============================================================================
-//
-// 1. Get a free key: https://console.groq.com  → API Keys → Create
-//    (no credit card required)
-// 2. Add to your .env:
-//      GROQ_API_KEY=gsk_your_key_here
-// 3. Replace the old Gemini block in your backend file (from
-//    "interface AnalyzeChartRequest" down through the end of
-//    "registerAnalyzeChartRoute") with everything below.
-// 4. Keep the registerAnalyzeChartRoute(app); call before app.listen — no
-//    change needed there.
+// GROQ 
 // ============================================================================
 
 interface AnalyzeChartRequest {
@@ -1069,15 +1061,83 @@ interface AnalyzeChartRequest {
 
 const CHART_CONTEXT: Record<string, string> = {
   temporal:
-    'A line chart showing the number of posts collected per day over the analysis period. ' +
-    'Each data point has a "date" and a "post_count".',
+    'A line chart showing the number of posts collected per day over the analysis period.',
   distribution:
-    'A bar chart showing how many users fall into each INFLUENT score range (e.g. "0.0-0.2", "0.2-0.4", etc). ' +
-    'Each data point has a "range" and a "count".',
+    'A bar chart showing how many users fall into each follower/influence range.',
   engagement:
-    'A line chart tracking average engagement per post over time: likes, replies, and retweets. ' +
-    'Each data point has a "date", "avg_likes", "avg_replies", and "avg_retweets".',
+    'A line chart tracking average engagement per post over time (likes, replies, retweets).',
 };
+
+
+
+function computeTemporalStats(data: any[]) {
+  const counts = data.map((d) => Number(d.post_count) || 0);
+  const total = counts.reduce((a, b) => a + b, 0);
+  const avg = total / (counts.length || 1);
+  const max = Math.max(...counts);
+  const min = Math.min(...counts);
+  const peakEntry = data.find((d) => Number(d.post_count) === max);
+  const quietEntry = data.find((d) => Number(d.post_count) === min);
+
+  const mid = Math.floor(data.length / 2);
+  const firstHalfAvg = counts.slice(0, mid).reduce((a, b) => a + b, 0) / (mid || 1);
+  const secondHalfAvg = counts.slice(mid).reduce((a, b) => a + b, 0) / ((counts.length - mid) || 1);
+  const direction =
+    secondHalfAvg > firstHalfAvg * 1.15 ? 'rising' :
+    secondHalfAvg < firstHalfAvg * 0.85 ? 'falling' : 'roughly flat';
+
+  return {
+    totalDataPoints: data.length,
+    totalPosts: total,
+    averagePostsPerDay: Number(avg.toFixed(2)),
+    peakDate: peakEntry?.date,
+    peakCount: max,
+    quietestDate: quietEntry?.date,
+    quietestCount: min,
+    firstDate: data[0]?.date,
+    lastDate: data[data.length - 1]?.date,
+    overallDirection: direction,
+  };
+}
+
+function computeDistributionStats(data: any[]) {
+  const total = data.reduce((sum, d) => sum + (Number(d.count) || 0), 0);
+  const withPct = data.map((d) => ({
+    range: d.range,
+    count: d.count,
+    percentage: total > 0 ? Number(((d.count / total) * 100).toFixed(1)) : 0,
+  }));
+  const largest = withPct.reduce((a, b) => (b.count > a.count ? b : a), withPct[0]);
+
+  return {
+    totalUsers: total,
+    breakdown: withPct,
+    mostCommonRange: largest?.range,
+    mostCommonPercentage: largest?.percentage,
+  };
+}
+
+function computeEngagementStats(data: any[]) {
+  const hasEngagementFields = data.some((d) => 'avg_likes' in d || 'avg_replies' in d || 'avg_retweets' in d);
+
+  if (!hasEngagementFields) {
+    return { hasEngagementFields: false, note: 'This dataset only contains post counts, not likes/replies/retweets.' };
+  }
+
+  const avg = (key: string) => {
+    const vals = data.map((d) => Number(d[key]) || 0);
+    return Number((vals.reduce((a, b) => a + b, 0) / (vals.length || 1)).toFixed(2));
+  };
+
+  return {
+    hasEngagementFields: true,
+    avgLikes: avg('avg_likes'),
+    avgReplies: avg('avg_replies'),
+    avgRetweets: avg('avg_retweets'),
+    firstDate: data[0]?.date,
+    lastDate: data[data.length - 1]?.date,
+  };
+}
 
 function summarizeForPrompt(chartType: string, data: any[]): any[] {
   const MAX_POINTS = 60;
@@ -1091,20 +1151,25 @@ function buildPrompt(chartType: string, data: any[]): string {
   const context = CHART_CONTEXT[chartType] || 'A chart from an analytics dashboard.';
   const trimmedData = summarizeForPrompt(chartType, data);
 
-  return `You are explaining a data visualization to someone viewing an influencer/social-media analytics dashboard called INFLUENT. They are not a data scientist, so avoid jargon.
+  let stats: any;
+  if (chartType === 'temporal') stats = computeTemporalStats(trimmedData);
+  else if (chartType === 'distribution') stats = computeDistributionStats(trimmedData);
+  else stats = computeEngagementStats(trimmedData);
+
+  return `You are a data analyst writing a short insight for someone viewing the INFLUENT analytics dashboard. They are not a data scientist.
 
 Chart type: ${chartType}
 What this chart shows: ${context}
 
-Here is the actual data behind the chart (JSON):
-${JSON.stringify(trimmedData)}
+Precomputed statistics for this exact dataset (these numbers are accurate, use them directly instead of guessing):
+${JSON.stringify(stats, null, 2)}
 
-Write a short explanation (4-6 sentences) that:
-1. Plainly describes what the person is looking at.
-2. Points out the specific trend or pattern visible in THIS data (reference real numbers/dates from the data above, not generic statements).
-3. Briefly notes what that trend might mean for understanding influence/engagement in this dataset.
+Write exactly 3 sentences, in plain flowing prose (no markdown, no bullet points, no headers, no "Overall" summary sentence at the end):
+1. One sentence stating the headline number or pattern (e.g. total, average, or most common range) using the actual figures above.
+2. One sentence describing the shape of the trend (rising, falling, flat, spiky, concentrated, spread out) — again referencing a real number or date from the stats, not a vague description.
+3. One sentence on what that specific pattern suggests about audience engagement or influence, grounded in the actual data, not generic advice.
 
-Do not use markdown formatting, headers, or bullet points. Write it as plain flowing sentences.`;
+Do not list out multiple individual data points or dates one after another. Do not repeat the same idea twice. Vary your sentence openings — do not start every response with "You're looking at" or "This chart shows."`;
 }
 
 export function registerAnalyzeChartRoute(app: express.Express) {
@@ -1160,12 +1225,6 @@ export function registerAnalyzeChartRoute(app: express.Express) {
     }
   });
 }
-
-
-
-
-
-
 // ============================================================================
 // START SERVER
 // ============================================================================
@@ -1173,7 +1232,10 @@ export function registerAnalyzeChartRoute(app: express.Express) {
 registerAnalyzeChartRoute(app);
 
 app.listen(PORT, () => {
-  console.log(`\n🚀 INFLUENT Backend Server running on http://localhost:${PORT}`);
+  console.log(`\n🚀 INFLUENT Backend Server running on port ${PORT}`);
   console.log(`📊 Database connected: YES`);
-  console.log(`🔗 API endpoints ready\n`);
+  console.log(`🔗 API endpoints ready`);
+  console.log(process.env.NODE_ENV === 'production'
+    ? '🌐 Running in production mode — CORS restricted to ALLOWED_ORIGINS\n'
+    : `🖥️  Local dev — reachable at http://localhost:${PORT}\n`);
 });
